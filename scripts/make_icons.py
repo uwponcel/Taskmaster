@@ -1,0 +1,104 @@
+from PIL import Image, ImageDraw
+
+S = 8          # supersample factor
+SIZE = 32
+C = SIZE * S   # canvas
+W = int(2.5 * S)  # stroke width
+WHITE = (255, 255, 255, 255)
+
+def canvas():
+    return Image.new("RGBA", (C, C), (0, 0, 0, 0))
+
+def save(img, name):
+    img = img.resize((SIZE, SIZE), Image.LANCZOS)
+    img.save(rf"C:\git\perso\Taskmaster\ref\{name}")
+    print(name)
+
+def eye():
+    img = canvas(); d = ImageDraw.Draw(img)
+    d.arc([3*S, 8*S, 29*S, 24*S], 200, 340, fill=WHITE, width=W)
+    d.arc([3*S, 8*S, 29*S, 24*S], 20, 160, fill=WHITE, width=W)
+    d.ellipse([13*S, 13*S, 19*S, 19*S], fill=WHITE)
+    save(img, "eye-icon.png")
+
+def lock():
+    img = canvas(); d = ImageDraw.Draw(img)
+    d.rounded_rectangle([7*S, 14*S, 25*S, 28*S], radius=2*S, outline=WHITE, width=W)
+    # Shackle legs must terminate at (or slightly past) the body's top edge (y=14),
+    # not float above it - the arc's leftmost/rightmost points sit at its vertical
+    # center, so center = 15 (1 unit of overlap into the body) closes the gap.
+    d.arc([10*S, 6*S, 22*S, 24*S], 180, 360, fill=WHITE, width=W)
+    d.ellipse([14*S, 19*S, 18*S, 23*S], fill=WHITE)
+    save(img, "lock-icon.png")
+
+def plus():
+    img = canvas(); d = ImageDraw.Draw(img)
+    d.line([16*S, 6*S, 16*S, 26*S], fill=WHITE, width=W)
+    d.line([6*S, 16*S, 26*S, 16*S], fill=WHITE, width=W)
+    save(img, "plus-icon.png")
+
+def chevron(name, up):
+    img = canvas(); d = ImageDraw.Draw(img)
+    if up:
+        pts = [(7*S, 20*S), (16*S, 11*S), (25*S, 20*S)]
+    else:
+        pts = [(7*S, 12*S), (16*S, 21*S), (25*S, 12*S)]
+    d.line(pts, fill=WHITE, width=W, joint="curve")
+    save(img, name)
+
+def pencil():
+    # PIL's stroked polygon() looks blobby at sharp corners (uneven joints, no
+    # taper). Instead, build a solid pencil silhouette horizontally out of clean
+    # primitives - filled body, filled tip triangle - then rotate the whole
+    # layer (keeps every edge crisply anti-aliased instead of stair-stepping a
+    # manually-angled polygon). A hollow outline reads as a solid blob at this
+    # thickness, so the body is filled solid and two thin fully-transparent
+    # "cut" lines punch through it to separate tip / shaft / ferrule visually.
+    tmp = Image.new("RGBA", (C, C), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tmp)
+    cy = 16 * S
+    half_h = int(2.6 * S)
+    # Tip apex to eraser end must be centered on the canvas (apex and end
+    # equidistant from x=16*S) - the previous apex-at-0/body-to-24*S layout was
+    # centered on 12*S, so the whole rotated pencil always sat off-center
+    # toward its own tip regardless of angle. Shifting everything +4*S puts
+    # the apex at 4*S and the end at 28*S, symmetric about the canvas center.
+    x0, x1 = 8 * S, 28 * S
+    tip_x = 4 * S
+    d.rounded_rectangle([x0, cy - half_h, x1, cy + half_h], radius=1 * S, fill=WHITE)
+    d.polygon([(x0, cy - half_h), (x0, cy + half_h), (tip_x, cy)], fill=WHITE)
+    gap = max(1, S // 3)
+    d.line([(x0 + 3 * S, cy - half_h - 2), (x0 + 3 * S, cy + half_h + 2)], fill=(0, 0, 0, 0), width=gap)
+    d.line([(24 * S, cy - half_h - 2), (24 * S, cy + half_h + 2)], fill=(0, 0, 0, 0), width=gap)
+
+    rotated = tmp.rotate(-40, resample=Image.BICUBIC, center=(16 * S, 16 * S))
+    img = canvas()
+    img.alpha_composite(rotated)
+    save(img, "pencil-icon.png")
+
+def note():
+    img = canvas(); d = ImageDraw.Draw(img)
+    d.rounded_rectangle([7*S, 5*S, 25*S, 27*S], radius=2*S, outline=WHITE, width=W)
+    for y in (11, 16, 21):
+        d.line([11*S, y*S, 21*S, y*S], fill=WHITE, width=W)
+    save(img, "note-icon.png")
+
+def clipboard():
+    # Same body box as note() (7,5)-(25,27) so the two share identical padding/
+    # stroke weight and scale to the same visual size at 14px - the previous
+    # clipboard-icon.png was a separately hand-made asset with different
+    # internal padding, which is why it looked bigger/misaligned next to note.
+    img = canvas(); d = ImageDraw.Draw(img)
+    d.rounded_rectangle([7*S, 5*S, 25*S, 27*S], radius=2*S, outline=WHITE, width=W)
+    d.rounded_rectangle([12*S, 3*S, 20*S, 8*S], radius=1*S, fill=WHITE)
+    for y in (14, 19, 24):
+        d.line([11*S, y*S, 21*S, y*S], fill=WHITE, width=W)
+    save(img, "clipboard-icon.png")
+
+# corner-icon.png is NOT generated here - it's owned by make_emblem.py's
+# make_corner_icon() (the gold medallion), which shares its design with the
+# window emblem. A corner() function used to live here too and silently
+# clobbered the medallion back to an old checklist-board design every time
+# this script ran for an unrelated icon - removed for that reason.
+
+eye(); lock(); plus(); chevron("chevron-up-icon.png", True); chevron("chevron-down-icon.png", False); pencil(); note(); clipboard()

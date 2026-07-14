@@ -1,0 +1,302 @@
+using System;
+using Blish_HUD;
+using Blish_HUD.Controls;
+using Blish_HUD.Input;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using Taskmaster.Models;
+using Taskmaster.Services;
+using Taskmaster.UI.Controls;
+
+namespace Taskmaster.UI
+{
+    public class TaskRow : Control
+    {
+        private const int RowHeight = 30;
+        private const int SubtaskIndent = 22;
+        private const int CheckboxSize = 16;
+        private const int IconSize = 14;
+        private const int Pad = 6;
+
+        private static readonly TimeSpan DueSoonThreshold = TimeSpan.FromHours(1);
+
+        private readonly TodoTask _task;
+        private readonly bool _isSubtask;
+        private string _countdownText = "";
+        private bool _dueSoon;
+        private bool _hover;
+        private DateTime _copiedFlashUntilUtc;
+
+        private Rectangle _chipBounds;
+        private Rectangle _clipboardBounds;
+        private Rectangle _noteBounds;
+        private Rectangle _pencilBounds;
+        private Rectangle _saveBounds;
+
+        public TodoTask Task => _task;
+        public bool IsExpanded { get; set; }
+        public bool Locked { get; set; }
+        /// <summary>True while this task's inline editor is open below the row.</summary>
+        public bool IsEditing { get; set; }
+        /// <summary>For a subtask row, the owning parent task - the countdown reflects
+        /// the parent's shared anchor instead of this subtask's own, since a group of
+        /// subtasks shares one reset, not one each. Null for top-level rows (own anchor).</summary>
+        public TodoTask CountdownAnchor { get; set; }
+
+        public event Action ToggleRequested;        // left-click checkbox / counter chip - toggles check/uncheck
+        public event Action EditRequested;          // pencil/close click - opens or closes the inline editor
+        public event Action SaveRequested;          // checkmark click (editing only) - applies the open editor's fields
+        public event Action ContextMenuRequested;   // right-click anywhere on the row
+        public event Action ExpandToggled;          // chevron click (parents only)
+        public event Action CopyRequested;          // clipboard icon click
+
+        public TaskRow(TodoTask task, bool isSubtask)
+        {
+            _task = task;
+            _isSubtask = isSubtask;
+            Height = RowHeight;
+        }
+
+        private int LeftOffset => Pad + (_isSubtask ? SubtaskIndent : 0);
+
+        // The list panel's Scrollbar (Blish HUD Controls.Scrollbar, 12px wide) overlaps
+        // the last ~18px of ContentRegion.Width rather than shrinking it, so anything
+        // hit-tested flush against Width would have its clicks swallowed by the
+        // scrollbar whenever the list is tall enough to need one. Keep all right-side
+        // interactive elements clear of that zone.
+        private const int ScrollbarMargin = 20;
+
+        // Right side, not left - so the checkbox/name column starts at the same X on
+        // every row whether or not that particular task has subtasks.
+        private Rectangle ChevronBounds =>
+            new Rectangle(Width - ScrollbarMargin - IconSize, (Height - IconSize) / 2, IconSize, IconSize);
+
+        private Rectangle CheckboxBounds =>
+            new Rectangle(LeftOffset, (Height - CheckboxSize) / 2, CheckboxSize, CheckboxSize);
+
+        private bool HasClipboard => !string.IsNullOrEmpty(_task.ClipboardContent);
+        private bool HasCounter => _task.TargetCount > 1 && !_task.HasSubtasks;
+        private bool InChipZone(Point p) => HasCounter && _chipBounds.Contains(p);
+
+        /// <summary>Called by the list panel once per minute (and after any mutation).</summary>
+        public void RefreshDisplay(DateTime nowUtc)
+        {
+            var anchor = CountdownAnchor ?? _task;
+            var next = ResetEngine.NextBoundary(anchor, nowUtc);
+            _countdownText = next.HasValue ? FormatCountdown(next.Value - nowUtc) : "";
+            _dueSoon = next.HasValue && !_task.IsDone && next.Value - nowUtc < DueSoonThreshold
+                       && anchor.Schedule != ResetScheduleType.Never;
+            BasicTooltipText = string.IsNullOrEmpty(_task.Notes) ? null : _task.Notes;
+            Invalidate();
+        }
+
+        public static string FormatCountdown(TimeSpan t)
+        {
+            if (t < TimeSpan.Zero) t = TimeSpan.Zero;
+            if (t.TotalDays >= 1) return $"{(int)t.TotalDays}d {t.Hours}h";
+            if (t.TotalHours >= 1) return $"{(int)t.TotalHours}h {t.Minutes:00}m";
+            return $"{t.Minutes}m";
+        }
+
+        public void FlashCopied()
+        {
+            _copiedFlashUntilUtc = DateTime.UtcNow.AddSeconds(1.5);
+            Invalidate();
+        }
+
+        protected override void OnMouseMoved(MouseEventArgs e)
+        {
+            base.OnMouseMoved(e);
+            _hover = true;
+            // The row's tooltip otherwise shows the task's Notes - swap it for a
+            // dedicated hint while directly over the copy-to-clipboard icon, same
+            // dynamic-tooltip approach TabStrip uses for its "+" button.
+            BasicTooltipText = HasClipboard && _clipboardBounds.Contains(RelativeMousePosition)
+                ? "Click to copy to clipboard"
+                : (string.IsNullOrEmpty(_task.Notes) ? null : _task.Notes);
+            Invalidate();
+        }
+        protected override void OnMouseLeft(MouseEventArgs e) { base.OnMouseLeft(e); _hover = false; Invalidate(); }
+
+        protected override void OnLeftMouseButtonPressed(MouseEventArgs e)
+        {
+            base.OnLeftMouseButtonPressed(e);
+            var p = RelativeMousePosition;
+
+            if (!_isSubtask && _task.HasSubtasks && ChevronBounds.Contains(p)) { ExpandToggled?.Invoke(); return; }
+            if (CheckboxBounds.Contains(p) || InChipZone(p)) { ToggleRequested?.Invoke(); return; }
+            if (!Locked && _saveBounds != Rectangle.Empty && _saveBounds.Contains(p)) { SaveRequested?.Invoke(); return; }
+            if (!Locked && _pencilBounds != Rectangle.Empty && _pencilBounds.Contains(p)) { EditRequested?.Invoke(); return; }
+            if (HasClipboard && _clipboardBounds.Contains(p)) { CopyRequested?.Invoke(); return; }
+        }
+
+        protected override void OnRightMouseButtonPressed(MouseEventArgs e)
+        {
+            base.OnRightMouseButtonPressed(e);
+            // Right-click is context-menu only everywhere on the row - checking and
+            // unchecking is left-click exclusively (ToggleRequested handles both directions).
+            if (!Locked) ContextMenuRequested?.Invoke();
+        }
+
+        protected override void Paint(SpriteBatch spriteBatch, Rectangle bounds)
+        {
+            var pixel = ContentService.Textures.Pixel;
+            var font = GameService.Content.DefaultFont14;
+            var smallFont = GameService.Content.DefaultFont12;
+
+            if (_hover)
+                spriteBatch.DrawOnCtrl(this, pixel, bounds, TaskmasterTheme.RowHover);
+
+            bool done = _task.IsDone;
+            var textColor = done ? TaskmasterTheme.DoneText
+                : _dueSoon ? TaskmasterTheme.DueSoon
+                : TaskmasterTheme.CreamWhite;
+
+            if (!_isSubtask && _task.HasSubtasks)
+            {
+                var chevron = IsExpanded ? TaskmasterIcons.ChevronUp : TaskmasterIcons.ChevronDown;
+                spriteBatch.DrawOnCtrl(this, chevron, ChevronBounds, TaskmasterTheme.DimText);
+            }
+
+            var cb = CheckboxBounds;
+            spriteBatch.DrawOnCtrl(this, pixel, cb, TaskmasterTheme.ChipFill);
+            DrawBorder(spriteBatch, cb, done ? TaskmasterTheme.Success : TaskmasterTheme.ChipBorder);
+            if (done)
+            {
+                var glyph = new Rectangle(cb.X + 2, cb.Y + 2, cb.Width - 4, cb.Height - 4);
+                spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Check, glyph, TaskmasterTheme.Success);
+            }
+
+            int x = cb.Right + 8;
+            var nameSize = font.MeasureString(_task.Name);
+            var nameRect = new Rectangle(x, 0, (int)nameSize.Width + 2, Height);
+            spriteBatch.DrawStringOnCtrl(this, _task.Name, font, nameRect, textColor,
+                false, HorizontalAlignment.Left, VerticalAlignment.Middle);
+            if (done)
+            {
+                var strike = new Rectangle(x, Height / 2, (int)nameSize.Width, 1);
+                spriteBatch.DrawOnCtrl(this, pixel, strike, TaskmasterTheme.DoneText);
+            }
+            x = nameRect.Right + 8;
+
+            if (HasCounter)
+            {
+                var chipText = $"{_task.CurrentCount}/{_task.TargetCount}";
+                var chipSize = smallFont.MeasureString(chipText);
+                _chipBounds = new Rectangle(x, (Height - 18) / 2, (int)chipSize.Width + 12, 18);
+                spriteBatch.DrawOnCtrl(this, pixel, _chipBounds, TaskmasterTheme.ChipFill);
+                DrawBorder(spriteBatch, _chipBounds, TaskmasterTheme.ChipBorder);
+                spriteBatch.DrawStringOnCtrl(this, chipText, smallFont, _chipBounds, TaskmasterTheme.Gold,
+                    false, HorizontalAlignment.Center, VerticalAlignment.Middle);
+                x = _chipBounds.Right + 8;
+            }
+            else if (!_isSubtask && _task.HasSubtasks)
+            {
+                int subCount = _task.Subtasks.Count;
+                string subText = subCount == 1 ? "1 subtask" : $"{subCount} subtasks";
+                var subSize = smallFont.MeasureString(subText);
+                var subRect = new Rectangle(x, 0, (int)subSize.Width + 2, Height);
+                spriteBatch.DrawStringOnCtrl(this, subText, smallFont, subRect, TaskmasterTheme.DimText,
+                    false, HorizontalAlignment.Left, VerticalAlignment.Middle);
+                x = subRect.Right + 8;
+                _chipBounds = Rectangle.Empty;
+            }
+            else
+            {
+                _chipBounds = Rectangle.Empty;
+            }
+
+            if (HasClipboard)
+            {
+                _clipboardBounds = new Rectangle(x, (Height - IconSize) / 2, IconSize, IconSize);
+                bool flashing = DateTime.UtcNow < _copiedFlashUntilUtc;
+                spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Clipboard, _clipboardBounds,
+                    flashing ? TaskmasterTheme.Success : TaskmasterTheme.DimText);
+                x = _clipboardBounds.Right + 6;
+            }
+            else
+            {
+                _clipboardBounds = Rectangle.Empty;
+            }
+
+            if (!string.IsNullOrEmpty(_task.Notes))
+            {
+                _noteBounds = new Rectangle(x, (Height - IconSize) / 2, IconSize, IconSize);
+                spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Note, _noteBounds, TaskmasterTheme.DimText);
+                x = _noteBounds.Right + 6;
+            }
+
+            // Reserve the chevron's slot on every top-level row (drawn only when the
+            // task actually has subtasks) so the countdown/edit-button column lines up
+            // whether or not this particular row has one.
+            int rightX = _isSubtask ? Width - ScrollbarMargin : Width - ScrollbarMargin - IconSize - 6;
+            // Subtasks share the parent's countdown (see TaskRow.CountdownAnchor), so
+            // repeating identical text on every child row was just noise - removed for
+            // now, parent row still shows it.
+            if (!_isSubtask && !string.IsNullOrEmpty(_countdownText))
+            {
+                var cdSize = smallFont.MeasureString(_countdownText);
+                var cdRect = new Rectangle(rightX - (int)cdSize.Width - 2, 0, (int)cdSize.Width + 2, Height);
+                spriteBatch.DrawStringOnCtrl(this, _countdownText, smallFont, cdRect,
+                    _dueSoon ? TaskmasterTheme.DueSoon : TaskmasterTheme.DimText,
+                    false, HorizontalAlignment.Right, VerticalAlignment.Middle);
+                rightX = cdRect.X - 8;
+            }
+
+            // Close (X) toggle: stays visible (not just on hover) while this task's
+            // editor is open, with its own chip background so it reads clearly against
+            // any row background - clicking it again is how the editor closes without
+            // saving. Subtasks don't get one - there's no editor for a subtask row
+            // (Rebuild() only opens TaskEditPanel for top-level tasks), so this used to
+            // render an edit button that did nothing when clicked.
+            if (!_isSubtask && (_hover || IsEditing) && !Locked)
+            {
+                const int btnSize = IconSize + 8;
+                _pencilBounds = new Rectangle(rightX - btnSize, (Height - btnSize) / 2, btnSize, btnSize);
+                spriteBatch.DrawOnCtrl(this, pixel, _pencilBounds, TaskmasterTheme.ChipFill);
+                DrawBorder(spriteBatch, _pencilBounds, IsEditing ? TaskmasterTheme.Gold : TaskmasterTheme.ChipBorder);
+
+                var glyphBounds = new Rectangle(
+                    _pencilBounds.X + (btnSize - IconSize) / 2,
+                    _pencilBounds.Y + (btnSize - IconSize) / 2,
+                    IconSize, IconSize);
+                var glyph = IsEditing ? TaskmasterIcons.Cancel : TaskmasterIcons.Pencil;
+                spriteBatch.DrawOnCtrl(this, glyph, glyphBounds, TaskmasterTheme.CreamWhite);
+
+                // Checkmark (save) sits just left of the close button, editing only -
+                // this is the only way to commit the open editor's fields now that the
+                // editor panel itself carries no Save/Cancel/Delete buttons of its own.
+                if (IsEditing)
+                {
+                    _saveBounds = new Rectangle(_pencilBounds.X - 4 - btnSize, (Height - btnSize) / 2, btnSize, btnSize);
+                    spriteBatch.DrawOnCtrl(this, pixel, _saveBounds, TaskmasterTheme.ChipFill);
+                    DrawBorder(spriteBatch, _saveBounds, TaskmasterTheme.Success);
+
+                    var saveGlyphBounds = new Rectangle(
+                        _saveBounds.X + (btnSize - IconSize) / 2,
+                        _saveBounds.Y + (btnSize - IconSize) / 2,
+                        IconSize, IconSize);
+                    spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Check, saveGlyphBounds, TaskmasterTheme.Success);
+                }
+                else
+                {
+                    _saveBounds = Rectangle.Empty;
+                }
+            }
+            else
+            {
+                _pencilBounds = Rectangle.Empty;
+                _saveBounds = Rectangle.Empty;
+            }
+        }
+
+        private void DrawBorder(SpriteBatch spriteBatch, Rectangle r, Color color)
+        {
+            var pixel = ContentService.Textures.Pixel;
+            spriteBatch.DrawOnCtrl(this, pixel, new Rectangle(r.X, r.Y, r.Width, 1), color);
+            spriteBatch.DrawOnCtrl(this, pixel, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), color);
+            spriteBatch.DrawOnCtrl(this, pixel, new Rectangle(r.X, r.Y, 1, r.Height), color);
+            spriteBatch.DrawOnCtrl(this, pixel, new Rectangle(r.Right - 1, r.Y, 1, r.Height), color);
+        }
+    }
+}
