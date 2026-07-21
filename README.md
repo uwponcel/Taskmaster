@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="256" height="256" alt="Taskmaster" src="https://maestro-assets.pages.dev/taskmaster-logo.png" />
+  <img width="256" height="256" alt="Taskmaster" src="https://maestro-assets.pages.dev/taskmaster-logo.png?v=20260721" />
 </p>
 
 <h1 align="center">Taskmaster</h1>
@@ -9,7 +9,7 @@
   Freeform tabs, real reset schedules, and a reset engine built to never drift.
 </p>
 
-![Tabs and tasks](https://maestro-assets.pages.dev/taskmaster-tasks.gif)
+![Creating and editing tasks](https://maestro-assets.pages.dev/taskmaster-tasks.gif?v=20260721-v2)
 
 ## Features
 
@@ -22,22 +22,29 @@
 - **Notes** - hover tooltip per task.
 - **Countdowns + due-soon warning** - see time to reset per task; unchecked tasks turn amber under 1 h.
 - **Tab progress badges** - "Dailies 4/7" at a glance.
+- **Multi-select** - click a task to select it, Shift-click a range, or Ctrl-click individual tasks, then move or delete the selection together.
 - **Share tabs** - export/import a whole tab via clipboard JSON, notes and progress stripped out.
 - Hide-done toggle, lock mode (checking still works, editing doesn't), unfocused opacity, toggle keybind.
 
 ## Tabs
 
-Click **+** to add a tab, drag or scroll the strip when you have more than fit, and right-click a tab for rename, color, duplicate-tab-safe delete, and "delete other tabs".
+Click **+** to add a tab, use the arrows or mouse wheel when you have more than fit, and right-click a tab to rename it in place, change its color, export or import, and manage deletion.
 
-![Tab management](https://maestro-assets.pages.dev/taskmaster-tabs.gif)
+![Tab management](https://maestro-assets.pages.dev/taskmaster-tabs.gif?v=20260721-v2)
 
 ## Tasks & Subtasks
 
-Click **+ Add task**, then the pencil to edit: name, reset schedule, a count target, a clipboard payload, notes, and subtasks. Left-click a checkbox to check or uncheck (both directions); right-click anywhere on a row for its context menu (edit, duplicate, move, move to another tab, delete).
+Click **+ Add task** in the bottom-right, then use the pencil to edit its name, reset schedule, count target, clipboard payload, notes, and subtasks. New tasks scroll into view automatically. Left-click a checkbox to check or uncheck it; right-click a task for edit, duplicate, reorder, move, and delete actions.
 
 A task with subtasks shows a chevron to expand it; the parent completes exactly when every subtask does, and they all count down together instead of each subtask running its own clock.
 
-![Subtasks](https://maestro-assets.pages.dev/taskmaster-subtasks.gif)
+![Tasks and subtasks](https://maestro-assets.pages.dev/taskmaster-subtasks.gif?v=20260721-v2)
+
+## Multi-select Tasks
+
+Click a task to select it, Shift-click another task to select the visible range between them, or Ctrl-click to toggle individual tasks. Right-click the selection to move every selected task to another tab or delete them together.
+
+![Selecting and managing multiple tasks](https://maestro-assets.pages.dev/taskmaster-selection.gif?v=20260721-v2)
 
 ## Reset Schedules
 
@@ -59,7 +66,7 @@ Calendar schedules (everything except Local time and Duration) are pure UTC math
 
 Right-click a tab to **Export** its tasks (including subtasks and schedules, but not notes or progress) as JSON to your clipboard. Paste it into another tab's import prompt to bring it in - handy for sharing a checklist with guildmates or moving one between characters/accounts.
 
-![Tab export and import](https://maestro-assets.pages.dev/taskmaster-share.gif)
+![Tab export and import](https://maestro-assets.pages.dev/taskmaster-share.gif?v=20260721-v2)
 
 ## Reliability
 

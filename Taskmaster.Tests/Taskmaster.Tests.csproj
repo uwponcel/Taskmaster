@@ -65,6 +65,7 @@
     <Compile Include="Services\ResetEngineTests.cs" />
     <Compile Include="Services\TaskStoreTests.cs" />
     <Compile Include="Services\TabShareTests.cs" />
+    <Compile Include="UI\TaskSelectionTests.cs" />
     <Compile Include="UI\TaskmasterThemeTests.cs" />
   </ItemGroup>
   <ItemGroup>

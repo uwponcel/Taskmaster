@@ -4,6 +4,7 @@ using Blish_HUD.Controls;
 using Blish_HUD.Input;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Input;
 using Taskmaster.Models;
 using Taskmaster.Services;
 using Taskmaster.UI.Controls;
@@ -16,6 +17,10 @@ namespace Taskmaster.UI
         private const int SubtaskIndent = 22;
         private const int CheckboxSize = 16;
         private const int IconSize = 14;
+        private const int ChevronHitSize = 24;
+        private const int ChevronIconSize = 18;
+        private const int EditIconSize = 24;
+        private const int EditActionIconSize = 28;
         private const int Pad = 6;
 
         private static readonly TimeSpan DueSoonThreshold = TimeSpan.FromHours(1);
@@ -25,6 +30,7 @@ namespace Taskmaster.UI
         private string _countdownText = "";
         private bool _dueSoon;
         private bool _hover;
+        private bool _isSelected;
         private DateTime _copiedFlashUntilUtc;
 
         private Rectangle _chipBounds;
@@ -36,6 +42,16 @@ namespace Taskmaster.UI
         public TodoTask Task => _task;
         public bool IsExpanded { get; set; }
         public bool Locked { get; set; }
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                Invalidate();
+            }
+        }
         /// <summary>True while this task's inline editor is open below the row.</summary>
         public bool IsEditing { get; set; }
         /// <summary>For a subtask row, the owning parent task - the countdown reflects
@@ -49,6 +65,7 @@ namespace Taskmaster.UI
         public event Action ContextMenuRequested;   // right-click anywhere on the row
         public event Action ExpandToggled;          // chevron click (parents only)
         public event Action CopyRequested;          // clipboard icon click
+        public event Action<bool, bool> SelectionRequested; // Shift extends a range, Ctrl toggles one row
 
         public TaskRow(TodoTask task, bool isSubtask)
         {
@@ -69,7 +86,24 @@ namespace Taskmaster.UI
         // Right side, not left - so the checkbox/name column starts at the same X on
         // every row whether or not that particular task has subtasks.
         private Rectangle ChevronBounds =>
-            new Rectangle(Width - ScrollbarMargin - IconSize, (Height - IconSize) / 2, IconSize, IconSize);
+            new Rectangle(
+                Width - ScrollbarMargin - ChevronHitSize,
+                (Height - ChevronHitSize) / 2,
+                ChevronHitSize,
+                ChevronHitSize);
+
+        private Rectangle ChevronGlyphBounds
+        {
+            get
+            {
+                var hitBounds = ChevronBounds;
+                return new Rectangle(
+                    hitBounds.X + (hitBounds.Width - ChevronIconSize) / 2,
+                    hitBounds.Y + (hitBounds.Height - ChevronIconSize) / 2,
+                    ChevronIconSize,
+                    ChevronIconSize);
+            }
+        }
 
         private Rectangle CheckboxBounds =>
             new Rectangle(LeftOffset, (Height - CheckboxSize) / 2, CheckboxSize, CheckboxSize);
@@ -128,6 +162,13 @@ namespace Taskmaster.UI
             if (!Locked && _saveBounds != Rectangle.Empty && _saveBounds.Contains(p)) { SaveRequested?.Invoke(); return; }
             if (!Locked && _pencilBounds != Rectangle.Empty && _pencilBounds.Contains(p)) { EditRequested?.Invoke(); return; }
             if (HasClipboard && _clipboardBounds.Contains(p)) { CopyRequested?.Invoke(); return; }
+            if (!Locked && !_isSubtask)
+            {
+                var modifiers = GameService.Input.Keyboard.ActiveModifiers;
+                SelectionRequested?.Invoke(
+                    modifiers.HasFlag(ModifierKeys.Shift),
+                    modifiers.HasFlag(ModifierKeys.Ctrl));
+            }
         }
 
         protected override void OnRightMouseButtonPressed(MouseEventArgs e)
@@ -144,6 +185,8 @@ namespace Taskmaster.UI
             var font = GameService.Content.DefaultFont14;
             var smallFont = GameService.Content.DefaultFont12;
 
+            if (IsSelected)
+                spriteBatch.DrawOnCtrl(this, pixel, bounds, TaskmasterTheme.RowSelected);
             if (_hover)
                 spriteBatch.DrawOnCtrl(this, pixel, bounds, TaskmasterTheme.RowHover);
 
@@ -155,7 +198,9 @@ namespace Taskmaster.UI
             if (!_isSubtask && _task.HasSubtasks)
             {
                 var chevron = IsExpanded ? TaskmasterIcons.ChevronUp : TaskmasterIcons.ChevronDown;
-                spriteBatch.DrawOnCtrl(this, chevron, ChevronBounds, TaskmasterTheme.DimText);
+                bool chevronHovered = _hover && ChevronBounds.Contains(RelativeMousePosition);
+                spriteBatch.DrawOnCtrl(this, chevron, ChevronGlyphBounds,
+                    chevronHovered ? TaskmasterTheme.Gold : TaskmasterTheme.MutedCream);
             }
 
             var cb = CheckboxBounds;
@@ -229,7 +274,9 @@ namespace Taskmaster.UI
             // Reserve the chevron's slot on every top-level row (drawn only when the
             // task actually has subtasks) so the countdown/edit-button column lines up
             // whether or not this particular row has one.
-            int rightX = _isSubtask ? Width - ScrollbarMargin : Width - ScrollbarMargin - IconSize - 6;
+            int rightX = _isSubtask
+                ? Width - ScrollbarMargin
+                : Width - ScrollbarMargin - ChevronHitSize - 6;
             // Subtasks share the parent's countdown (see TaskRow.CountdownAnchor), so
             // repeating identical text on every child row was just noise - removed for
             // now, parent row still shows it.
@@ -243,43 +290,53 @@ namespace Taskmaster.UI
                 rightX = cdRect.X - 8;
             }
 
-            // Close (X) toggle: stays visible (not just on hover) while this task's
-            // editor is open, with its own chip background so it reads clearly against
-            // any row background - clicking it again is how the editor closes without
-            // saving. Subtasks don't get one - there's no editor for a subtask row
-            // (Rebuild() only opens TaskEditPanel for top-level tasks), so this used to
-            // render an edit button that did nothing when clicked.
+            // Close stays visible while this task's editor is open. Subtasks don't get
+            // edit actions because they have no inline editor of their own.
             if (!_isSubtask && (_hover || IsEditing) && !Locked)
             {
-                const int btnSize = IconSize + 8;
-                _pencilBounds = new Rectangle(rightX - btnSize, (Height - btnSize) / 2, btnSize, btnSize);
-                spriteBatch.DrawOnCtrl(this, pixel, _pencilBounds, TaskmasterTheme.ChipFill);
-                DrawBorder(spriteBatch, _pencilBounds, IsEditing ? TaskmasterTheme.Gold : TaskmasterTheme.ChipBorder);
-
-                var glyphBounds = new Rectangle(
-                    _pencilBounds.X + (btnSize - IconSize) / 2,
-                    _pencilBounds.Y + (btnSize - IconSize) / 2,
-                    IconSize, IconSize);
-                var glyph = IsEditing ? TaskmasterIcons.Cancel : TaskmasterIcons.Pencil;
-                spriteBatch.DrawOnCtrl(this, glyph, glyphBounds, TaskmasterTheme.CreamWhite);
-
                 // Checkmark (save) sits just left of the close button, editing only -
                 // this is the only way to commit the open editor's fields now that the
                 // editor panel itself carries no Save/Cancel/Delete buttons of its own.
                 if (IsEditing)
                 {
-                    _saveBounds = new Rectangle(_pencilBounds.X - 4 - btnSize, (Height - btnSize) / 2, btnSize, btnSize);
-                    spriteBatch.DrawOnCtrl(this, pixel, _saveBounds, TaskmasterTheme.ChipFill);
-                    DrawBorder(spriteBatch, _saveBounds, TaskmasterTheme.Success);
+                    const int hitSize = RowHeight;
+                    const int actionGap = 2;
+                    _pencilBounds = new Rectangle(rightX - hitSize, 0, hitSize, hitSize);
+
+                    var closeGlyphBounds = new Rectangle(
+                        _pencilBounds.X + (hitSize - EditActionIconSize) / 2,
+                        _pencilBounds.Y + (hitSize - EditActionIconSize) / 2,
+                        EditActionIconSize,
+                        EditActionIconSize);
+                    spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Cancel, closeGlyphBounds, TaskmasterTheme.CreamWhite);
+
+                    _saveBounds = new Rectangle(
+                        _pencilBounds.X - actionGap - hitSize,
+                        0,
+                        hitSize,
+                        hitSize);
 
                     var saveGlyphBounds = new Rectangle(
-                        _saveBounds.X + (btnSize - IconSize) / 2,
-                        _saveBounds.Y + (btnSize - IconSize) / 2,
-                        IconSize, IconSize);
+                        _saveBounds.X + (hitSize - EditActionIconSize) / 2,
+                        _saveBounds.Y + (hitSize - EditActionIconSize) / 2,
+                        EditActionIconSize,
+                        EditActionIconSize);
                     spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Check, saveGlyphBounds, TaskmasterTheme.Success);
                 }
                 else
                 {
+                    const int hitSize = RowHeight;
+                    _pencilBounds = new Rectangle(
+                        rightX - hitSize,
+                        (Height - hitSize) / 2,
+                        hitSize,
+                        hitSize);
+                    var pencilGlyphBounds = new Rectangle(
+                        _pencilBounds.X + (hitSize - EditIconSize) / 2,
+                        _pencilBounds.Y + (hitSize - EditIconSize) / 2,
+                        EditIconSize,
+                        EditIconSize);
+                    spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Pencil, pencilGlyphBounds, TaskmasterTheme.CreamWhite);
                     _saveBounds = Rectangle.Empty;
                 }
             }

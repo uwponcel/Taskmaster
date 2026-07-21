@@ -52,6 +52,7 @@
         <Compile Include="Settings\ModuleSettings.cs"/>
         <Compile Include="Settings\TaskmasterSettingsView.cs"/>
         <Compile Include="UI\TaskmasterTheme.cs"/>
+        <Compile Include="UI\TaskSelection.cs"/>
         <Compile Include="UI\TabStrip.cs"/>
         <Compile Include="UI\TaskRow.cs"/>
         <Compile Include="UI\TaskEditPanel.cs"/>

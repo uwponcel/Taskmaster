@@ -51,6 +51,7 @@ namespace Taskmaster.UI
         private int _dynamicRowsStartY;
 
         public event Action Saved;
+        public event Action ContentHeightChanging;
 
         public TaskEditPanel(TodoTask task, bool isNew = false)
         {
@@ -109,6 +110,7 @@ namespace Taskmaster.UI
             _newSubtaskBox.EnterPressed += (s, e) =>
             {
                 if (string.IsNullOrWhiteSpace(_newSubtaskBox.Text)) return;
+                ContentHeightChanging?.Invoke();
                 _workingSubtasks.Add(new TodoTask { Name = _newSubtaskBox.Text.Trim(), Schedule = _task.Schedule });
                 _newSubtaskBox.Text = "";
                 RebuildSubtaskList();
@@ -212,7 +214,12 @@ namespace Taskmaster.UI
                 var remove = new IconButton(TaskmasterIcons.Cancel, TaskmasterTheme.IconGlyph)
                 { Parent = _subtaskPanel, Left = 246, Top = y, Width = 22, Height = 22 };
                 var captured = sub;
-                remove.Click += (s, e) => { _workingSubtasks.Remove(captured); RebuildSubtaskList(); };
+                remove.Click += (s, e) =>
+                {
+                    ContentHeightChanging?.Invoke();
+                    _workingSubtasks.Remove(captured);
+                    RebuildSubtaskList();
+                };
                 y += SubtaskRowHeight;
             }
             UpdateConditionalVisibility();
