@@ -31,13 +31,16 @@ namespace Taskmaster.Settings
             const int rowHeight = 32;
             const int rowGap = 6;
 
-            // HideDone and LockTasks are deliberately not listed here - they're
-            // controlled entirely by the eye/lock icon buttons in the Taskmaster
-            // window itself, so showing them again in the global settings panel would
-            // just be a redundant, easy-to-desync duplicate toggle.
             int y = 10;
             foreach (var setting in new SettingEntry[]
-                     { _settings.ToggleWindow, _settings.UnfocusedOpacity, _settings.ShowOnMap })
+                     {
+                         _settings.ToggleWindow,
+                         _settings.UnfocusedOpacity,
+                         _settings.InterfaceScale,
+                         _settings.TextScale,
+                         _settings.EnableDragReordering,
+                         _settings.ShowOnMap
+                     })
             {
                 var view = Blish_HUD.Settings.UI.Views.SettingView.FromType(setting, buildPanel.Width);
                 if (view != null)

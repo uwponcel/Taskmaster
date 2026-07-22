@@ -13,22 +13,7 @@ namespace Taskmaster.UI
 {
     public class TabStrip : Control
     {
-        private const int TabPaddingX = 10;
-        private const int TabGap = 4;
-        private const int NameBadgeGap = 10;
-        private const int BadgePaddingX = 6;
-        private const int BadgeHeight = 18;
         private const int TabRadius = 3;
-        private const int MinTabWidth = 88;
-        private const int MaxTabNameWidth = 140;
-        private const int PlusWidth = 28;
-        private const int PlusIconSize = 14;
-        private const int DragThreshold = 6;
-        private const int ScrollArrowWidth = 18;
-        private const int ScrollStep = 90;
-        private const int ControlGap = 2;
-        private const int EdgeFadeWidth = 10;
-        private const int ControlRailWidth = ScrollArrowWidth * 2 + PlusWidth + ControlGap * 2;
 
         private IReadOnlyList<TodoTab> _tabs = new List<TodoTab>();
         private readonly List<Rectangle> _tabBounds = new List<Rectangle>();
@@ -50,6 +35,7 @@ namespace Taskmaster.UI
         private Guid? _activeTabId;
         private Guid? _editingTabId;
         private bool _ensureActiveVisible;
+        private TaskmasterSizing _sizing = new TaskmasterSizing(1f, 1f);
 
         public Guid? ActiveTabId
         {
@@ -74,6 +60,16 @@ namespace Taskmaster.UI
         }
         /// <summary>When true, the "+" button is grayed out and stops adding tabs.</summary>
         public bool Locked { get; set; }
+        public TaskmasterSizing Sizing
+        {
+            get => _sizing;
+            set
+            {
+                _sizing = value ?? new TaskmasterSizing(1f, 1f);
+                Height = _sizing.Px(32);
+                Invalidate();
+            }
+        }
 
         public event Action<TodoTab> TabClicked;
         public event Action<TodoTab> TabRightClicked;
@@ -83,7 +79,7 @@ namespace Taskmaster.UI
 
         public TabStrip()
         {
-            Height = 32;
+            Height = _sizing.Px(32);
         }
 
         /// <summary>Also intercept the mouse wheel so hovering the strip scrolls it.</summary>
@@ -100,17 +96,22 @@ namespace Taskmaster.UI
         private void RecomputeLayout()
         {
             _tabBounds.Clear();
-            var font = GameService.Content.DefaultFont14;
-            var badgeFont = GameService.Content.DefaultFont12;
+            var font = _sizing.BodyFont;
+            var badgeFont = _sizing.SmallFont;
+            int tabPaddingX = _sizing.Px(10);
+            int nameBadgeGap = _sizing.Px(10);
+            int badgePaddingX = _sizing.Px(6);
+            int minTabWidth = _sizing.Px(88);
+            int maxTabNameWidth = _sizing.Px(140);
             int x = 0;
             foreach (var tab in _tabs)
             {
-                int nameWidth = Math.Min(MaxTabNameWidth, (int)font.MeasureString(tab.Name).Width);
-                int badgeWidth = (int)badgeFont.MeasureString(BadgeText(tab)).Width + BadgePaddingX * 2;
-                int w = Math.Max(MinTabWidth,
-                    nameWidth + badgeWidth + NameBadgeGap + TabPaddingX * 2);
-                _tabBounds.Add(new Rectangle(x, 2, w, Height - 3));
-                x += w + TabGap;
+                int nameWidth = Math.Min(maxTabNameWidth, (int)font.MeasureString(tab.Name).Width);
+                int badgeWidth = (int)badgeFont.MeasureString(BadgeText(tab)).Width + badgePaddingX * 2;
+                int w = Math.Max(minTabWidth,
+                    nameWidth + badgeWidth + nameBadgeGap + tabPaddingX * 2);
+                _tabBounds.Add(new Rectangle(x, _sizing.Px(2), w, Height - _sizing.Px(3)));
+                x += w + _sizing.Px(4);
             }
             _contentWidth = x;
 
@@ -140,7 +141,14 @@ namespace Taskmaster.UI
         }
 
         private int RailStartX => Math.Max(0, Width - ControlRailWidth);
-        private int ViewportWidth => Math.Max(0, RailStartX - TabGap);
+        private int ViewportWidth => Math.Max(0, RailStartX - _sizing.Px(4));
+        private int ScrollArrowWidth => _sizing.Px(18);
+        private int ScrollStep => _sizing.Px(90);
+        private int ControlGap => _sizing.Px(2);
+        private int PlusWidth => _sizing.Px(28);
+        private int PlusIconSize => _sizing.Px(14);
+        private int EdgeFadeWidth => _sizing.Px(10);
+        private int ControlRailWidth => ScrollArrowWidth * 2 + PlusWidth + ControlGap * 2;
         private int MaxScroll() => Math.Max(0, _contentWidth - ViewportWidth);
         private int ClampScroll(int value) => Math.Max(0, Math.Min(value, MaxScroll()));
         private bool CanScrollLeft => _scrollX > 0;
@@ -174,10 +182,10 @@ namespace Taskmaster.UI
                     ? new Rectangle(tabBounds.X, tabBounds.Y - 1, tabBounds.Width, tabBounds.Height + 1)
                     : tabBounds;
                 bounds = new Rectangle(
-                    visualBounds.X + 6,
-                    visualBounds.Y + 3,
-                    Math.Max(40, visualBounds.Width - 12),
-                    24);
+                    visualBounds.X + _sizing.Px(6),
+                    visualBounds.Y + _sizing.Px(3),
+                    Math.Max(_sizing.Px(40), visualBounds.Width - _sizing.Px(12)),
+                    _sizing.Px(24));
                 return true;
             }
 
@@ -196,7 +204,7 @@ namespace Taskmaster.UI
             BasicTooltipText = _hoverPlus && Locked
                 ? "Locked - unlock to add tabs"
                 : _hoverIndex >= 0 && _hoverIndex < _tabs.Count &&
-                  GameService.Content.DefaultFont14.MeasureString(_tabs[_hoverIndex].Name).Width > MaxTabNameWidth
+                  _sizing.BodyFont.MeasureString(_tabs[_hoverIndex].Name).Width > _sizing.Px(140)
                     ? _tabs[_hoverIndex].Name
                     : null;
 
@@ -205,7 +213,7 @@ namespace Taskmaster.UI
                 _scrollX = ClampScroll(_panStartScrollX + (_panStartX - p.X));
             }
             else if (_dragIndex >= 0 && !_dragging &&
-                Math.Abs(p.X - _dragStart.X) > DragThreshold)
+                Math.Abs(p.X - _dragStart.X) > _sizing.Px(6))
             {
                 _dragging = true;
             }
@@ -301,8 +309,8 @@ namespace Taskmaster.UI
         protected override void Paint(SpriteBatch spriteBatch, Rectangle bounds)
         {
             RecomputeLayout();
-            var font = GameService.Content.DefaultFont14;
-            var badgeFont = GameService.Content.DefaultFont12;
+            var font = _sizing.BodyFont;
+            var badgeFont = _sizing.SmallFont;
             var pixel = ContentService.Textures.Pixel;
 
             spriteBatch.DrawOnCtrl(this, pixel,
@@ -332,11 +340,12 @@ namespace Taskmaster.UI
                 }
 
                 var accent = TaskmasterTheme.ParseAccentHex(tab.AccentColorHex) ?? TaskmasterTheme.Gold;
+                int tabPaddingX = _sizing.Px(10);
                 var accentLine = new Rectangle(
-                    visualBounds.X + TabPaddingX,
-                    visualBounds.Bottom - 2,
-                    Math.Max(8, visualBounds.Width - TabPaddingX * 2),
-                    2);
+                    visualBounds.X + tabPaddingX,
+                    visualBounds.Bottom - _sizing.Px(2),
+                    Math.Max(_sizing.Px(8), visualBounds.Width - tabPaddingX * 2),
+                    _sizing.Px(2));
                 spriteBatch.DrawOnCtrl(this, pixel, accentLine,
                     active ? accent : accent * (hover ? 0.72f : 0.48f));
 
@@ -344,17 +353,18 @@ namespace Taskmaster.UI
 
                 var nameColor = active ? TaskmasterTheme.CreamWhite : TaskmasterTheme.TabInactiveText;
                 var badge = BadgeText(tab);
-                int badgeWidth = (int)badgeFont.MeasureString(badge).Width + BadgePaddingX * 2;
+                int badgeHeight = _sizing.Px(18);
+                int badgeWidth = (int)badgeFont.MeasureString(badge).Width + _sizing.Px(12);
                 var badgeBounds = new Rectangle(
-                    visualBounds.Right - TabPaddingX - badgeWidth,
-                    visualBounds.Y + (visualBounds.Height - BadgeHeight) / 2 + 1,
+                    visualBounds.Right - tabPaddingX - badgeWidth,
+                    visualBounds.Y + (visualBounds.Height - badgeHeight) / 2 + _sizing.Px(1),
                     badgeWidth,
-                    BadgeHeight);
+                    badgeHeight);
                 var nameRect = new Rectangle(
-                    visualBounds.X + TabPaddingX,
-                    visualBounds.Y + 2,
-                    Math.Max(0, badgeBounds.X - NameBadgeGap - visualBounds.X - TabPaddingX),
-                    visualBounds.Height - 2);
+                    visualBounds.X + tabPaddingX,
+                    visualBounds.Y + _sizing.Px(2),
+                    Math.Max(0, badgeBounds.X - _sizing.Px(10) - visualBounds.X - tabPaddingX),
+                    visualBounds.Height - _sizing.Px(2));
                 spriteBatch.DrawStringOnCtrl(this, FitText(tab.Name, font, nameRect.Width), font, nameRect, nameColor,
                     false, HorizontalAlignment.Left, VerticalAlignment.Middle);
 
@@ -388,7 +398,11 @@ namespace Taskmaster.UI
 
             // The rail is painted after the tabs, masking anything beyond the viewport
             // and giving the navigation controls stable, non-overlapping real estate.
-            var railBounds = new Rectangle(RailStartX, 2, ControlRailWidth, Height - 2);
+            var railBounds = new Rectangle(
+                RailStartX,
+                _sizing.Px(2),
+                ControlRailWidth,
+                Height - _sizing.Px(2));
             spriteBatch.DrawOnCtrl(this, pixel, railBounds, TaskmasterTheme.ChipFill);
 
             DrawScrollButton(spriteBatch, font, LeftArrowBounds, "<", CanScrollLeft, _hoverLeft);

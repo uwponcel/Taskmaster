@@ -22,6 +22,7 @@ namespace Taskmaster.UI
         private const int ActionBarPadding = 6;
         private const int ActionControlGap = 4;
         private const int ListActionBarGap = 4;
+        private static readonly TimeSpan WindowFadeSettleDelay = TimeSpan.FromMilliseconds(250);
 
         private readonly TaskStore _store;
         private readonly ModuleSettings _settings;
@@ -36,6 +37,10 @@ namespace Taskmaster.UI
         private TextBox _renameBox;
         private Guid? _renamingTabId;
         private Guid? _activeTabId;
+        private TaskmasterSizing _sizing;
+        private bool _hideDone;
+        private bool _locked;
+        private DateTime? _applyUnfocusedOpacityAtUtc;
         // WindowBase2's base ctor sets Size, which synchronously fires OnResized before
         // this subclass's own ctor body (and therefore the fields above) has run - guard
         // against that half-constructed callback, same lesson as Maestro's PracticeWindow.
@@ -48,6 +53,9 @@ namespace Taskmaster.UI
         {
             _store = store;
             _settings = settings;
+            _sizing = new TaskmasterSizing(
+                _settings.InterfaceScale.Value,
+                _settings.TextScale.Value);
 
             Parent = GameService.Graphics.SpriteScreen;
             Title = "Taskmaster";
@@ -72,40 +80,43 @@ namespace Taskmaster.UI
 
             _hideDoneBtn = new IconButton(TaskmasterIcons.Eye, TaskmasterTheme.IconGlyph)
             {
-                Parent = _actionBar, Width = 30, Height = 26,
-                Selected = _settings.HideDone.Value,
+                Parent = _actionBar,
+                Selected = _hideDone,
                 BasicTooltipText = "Hide completed tasks and fully completed tabs"
             };
             _lockBtn = new IconButton(TaskmasterIcons.Lock, TaskmasterTheme.IconGlyph)
             {
-                Parent = _actionBar, Width = 30, Height = 26,
-                Selected = _settings.LockTasks.Value,
+                Parent = _actionBar,
+                Selected = _locked,
                 BasicTooltipText = "Lock tasks (checking still works)"
             };
 
             _addTaskBtn = new StandardButton
             {
                 Parent = _actionBar,
-                Height = 26,
                 Text = "+  Add task"
             };
-            _addTaskBtn.Width = (int)GameService.Content.DefaultFont14.MeasureString(_addTaskBtn.Text).Width + 24;
             UpdateAddTaskButtonState();
 
-            _tabStrip = new TabStrip { Parent = this, Locked = _settings.LockTasks.Value };
+            _tabStrip = new TabStrip
+            {
+                Parent = this,
+                Locked = _locked,
+                Sizing = _sizing
+            };
 
             _listPanel = new TaskListPanel
             {
                 Parent = this,
-                HideDone = _settings.HideDone.Value,
-                Locked = _settings.LockTasks.Value
+                HideDone = _hideDone,
+                Locked = _locked,
+                DragReorderingEnabled = _settings.EnableDragReordering.Value,
+                Sizing = _sizing
             };
 
             _emptyLabel = new Label
             {
                 Parent = this,
-                Height = 28,
-                Font = GameService.Content.DefaultFont16,
                 Text = "Create your first tab with the + in the top right corner",
                 TextColor = TaskmasterTheme.DimText,
                 HorizontalAlignment = HorizontalAlignment.Center,
@@ -113,6 +124,7 @@ namespace Taskmaster.UI
                 Visible = false
             };
 
+            ApplySizing();
             RelayoutChildren();
             WireEvents();
             SelectInitialTab();
@@ -124,17 +136,21 @@ namespace Taskmaster.UI
         /// once at construction and again whenever the user resizes the window.</summary>
         private void RelayoutChildren()
         {
+            int listTop = _tabStrip.Height + _sizing.Px(4);
+            int actionBarHeight = _sizing.Px(ActionBarHeight);
+            int listActionBarGap = _sizing.Px(ListActionBarGap);
+
             _tabStrip.Location = Point.Zero;
             _tabStrip.Width = ContentRegion.Width;
 
-            _actionBar.Location = new Point(0, Math.Max(0, ContentRegion.Height - ActionBarHeight));
-            _actionBar.Size = new Point(ContentRegion.Width, ActionBarHeight);
+            _actionBar.Location = new Point(0, Math.Max(0, ContentRegion.Height - actionBarHeight));
+            _actionBar.Size = new Point(ContentRegion.Width, actionBarHeight);
             _actionBarSeparator.Width = _actionBar.Width;
             RelayoutActionBarControls();
 
-            _listPanel.Location = new Point(0, ListTop);
+            _listPanel.Location = new Point(0, listTop);
             _listPanel.Width = ContentRegion.Width;
-            _listPanel.Height = Math.Max(0, _actionBar.Top - ListTop - ListActionBarGap);
+            _listPanel.Height = Math.Max(0, _actionBar.Top - listTop - listActionBarGap);
             // Existing rows/buttons were built with a fixed Width at the time they were
             // added to the FlowPanel - resizing the panel itself doesn't resize them
             // retroactively, so rebuild to pick up the new width immediately instead of
@@ -142,18 +158,23 @@ namespace Taskmaster.UI
             _listPanel.Rebuild();
 
             _emptyLabel.Width = ContentRegion.Width;
-            _emptyLabel.Location = new Point(0, ListTop + _listPanel.Height / 2 - 14);
+            _emptyLabel.Location = new Point(
+                0,
+                listTop + _listPanel.Height / 2 - _emptyLabel.Height / 2);
             RelayoutTabRenameBox();
         }
 
         private void RelayoutActionBarControls()
         {
-            int controlY = (ActionBarHeight - _hideDoneBtn.Height) / 2;
-            _hideDoneBtn.Location = new Point(ActionBarPadding, controlY);
-            _lockBtn.Location = new Point(_hideDoneBtn.Right + ActionControlGap, controlY);
+            int padding = _sizing.Px(ActionBarPadding);
+            int controlY = (_actionBar.Height - _hideDoneBtn.Height) / 2;
+            _hideDoneBtn.Location = new Point(padding, controlY);
+            _lockBtn.Location = new Point(
+                _hideDoneBtn.Right + _sizing.Px(ActionControlGap),
+                controlY);
             _addTaskBtn.Location = new Point(
-                Math.Max(ActionBarPadding, _actionBar.Width - _addTaskBtn.Width - ActionBarPadding),
-                (ActionBarHeight - _addTaskBtn.Height) / 2);
+                Math.Max(padding, _actionBar.Width - _addTaskBtn.Width - padding),
+                (_actionBar.Height - _addTaskBtn.Height) / 2);
         }
 
         private void RelayoutTabRenameBox()
@@ -176,8 +197,8 @@ namespace Taskmaster.UI
         {
             base.OnResized(e);
             if (!_isConstructed) return;
-            int correctedWidth = Math.Max(MinWindowWidth, Width);
-            int correctedHeight = Math.Max(MinWindowHeight, Height);
+            int correctedWidth = Math.Max(_sizing.Px(MinWindowWidth), Width);
+            int correctedHeight = Math.Max(_sizing.Px(MinWindowHeight), Height);
             if (correctedWidth != Width || correctedHeight != Height)
             {
                 Size = new Point(correctedWidth, correctedHeight);
@@ -197,11 +218,16 @@ namespace Taskmaster.UI
                     Opacity = _settings.UnfocusedOpacity.Value;
             };
 
+            _settings.InterfaceScale.PropertyChanged += (s, e) => ApplySizingAndRelayout();
+            _settings.TextScale.PropertyChanged += (s, e) => ApplySizingAndRelayout();
+            _settings.EnableDragReordering.PropertyChanged += (s, e) =>
+                _listPanel.DragReorderingEnabled = _settings.EnableDragReordering.Value;
+
             _hideDoneBtn.Click += (s, e) =>
             {
-                _settings.HideDone.Value = !_settings.HideDone.Value;
-                _hideDoneBtn.Selected = _settings.HideDone.Value;
-                _listPanel.HideDone = _settings.HideDone.Value;
+                _hideDone = !_hideDone;
+                _hideDoneBtn.Selected = _hideDone;
+                _listPanel.HideDone = _hideDone;
                 // Tab-level hiding (ShouldHideTab) is only recomputed inside RefreshAll -
                 // without this, a fully-completed tab wouldn't disappear from the strip
                 // until the next unrelated event happened to call RefreshAll (e.g.
@@ -211,10 +237,10 @@ namespace Taskmaster.UI
 
             _lockBtn.Click += (s, e) =>
             {
-                _settings.LockTasks.Value = !_settings.LockTasks.Value;
-                _lockBtn.Selected = _settings.LockTasks.Value;
-                _listPanel.Locked = _settings.LockTasks.Value;
-                _tabStrip.Locked = _settings.LockTasks.Value;
+                _locked = !_locked;
+                _lockBtn.Selected = _locked;
+                _listPanel.Locked = _locked;
+                _tabStrip.Locked = _locked;
                 UpdateAddTaskButtonState();
             };
 
@@ -238,10 +264,10 @@ namespace Taskmaster.UI
         }
 
         /// <summary>A fully-completed tab (all tasks done, at least one task) is hidden
-        /// alongside individual completed tasks when HideDone is on - an empty tab is
+        /// alongside individual completed tasks when hiding completed items - an empty tab is
         /// never hidden this way, only one whose tasks are all checked off.</summary>
         private bool ShouldHideTab(TodoTab tab) =>
-            _settings.HideDone.Value && tab.TotalCount > 0 && tab.DoneCount == tab.TotalCount;
+            _hideDone && tab.TotalCount > 0 && tab.DoneCount == tab.TotalCount;
 
         private TodoTab ActiveTab
         {
@@ -315,7 +341,7 @@ namespace Taskmaster.UI
 
         private void AddTab()
         {
-            if (_settings.LockTasks.Value) return;
+            if (_locked) return;
             var tab = new TodoTab { Name = "New tab", Order = _store.Tabs.Count };
             _store.Tabs.Add(tab);
             _activeTabId = tab.Id;
@@ -325,17 +351,16 @@ namespace Taskmaster.UI
 
         private void UpdateAddTaskButtonState()
         {
-            bool locked = _settings.LockTasks.Value;
             bool hasActiveTab = ActiveTab != null;
-            _addTaskBtn.Enabled = !locked && hasActiveTab;
-            _addTaskBtn.BasicTooltipText = locked
+            _addTaskBtn.Enabled = !_locked && hasActiveTab;
+            _addTaskBtn.BasicTooltipText = _locked
                 ? "Locked - unlock to add tasks"
                 : hasActiveTab ? null : "Add a tab first";
         }
 
         private void AddTaskToActiveTab()
         {
-            if (_settings.LockTasks.Value) return;
+            if (_locked) return;
             var tab = ActiveTab;
             if (tab == null)
             {
@@ -362,7 +387,8 @@ namespace Taskmaster.UI
             _renameBox = new TextBox
             {
                 Parent = this,
-                Height = 26,
+                Height = _sizing.Px(26),
+                Font = _sizing.BodyFont,
                 // A brand new tab starts empty with its default name as a placeholder,
                 // so the first keystroke doesn't need to clear "New tab" first.
                 Text = isNew ? "" : tab.Name,
@@ -383,6 +409,49 @@ namespace Taskmaster.UI
             _renameBox.EnterPressed += (s, e) => Commit();
             _renameBox.InputFocusChanged += (s, e) => { if (!_renameBox.Focused) Commit(); };
             _renameBox.Focused = true;
+        }
+
+        private void ApplySizingAndRelayout()
+        {
+            ApplySizing();
+            RelayoutChildren();
+        }
+
+        private void ApplySizing()
+        {
+            _sizing = new TaskmasterSizing(
+                _settings.InterfaceScale.Value,
+                _settings.TextScale.Value);
+
+            int compactButtonHeight = _sizing.Px(26);
+            int iconButtonWidth = _sizing.Px(30);
+            int glyphSize = _sizing.Px(16);
+            _hideDoneBtn.Size = new Point(iconButtonWidth, compactButtonHeight);
+            _hideDoneBtn.GlyphSize = glyphSize;
+            _lockBtn.Size = new Point(iconButtonWidth, compactButtonHeight);
+            _lockBtn.GlyphSize = glyphSize;
+
+            _addTaskBtn.Height = compactButtonHeight;
+            int addTaskTextWidth = (int)Math.Max(
+                GameService.Content.DefaultFont14.MeasureString(_addTaskBtn.Text).Width,
+                _sizing.BodyFont.MeasureString(_addTaskBtn.Text).Width);
+            _addTaskBtn.Width =
+                addTaskTextWidth + _sizing.Px(24);
+
+            _tabStrip.Sizing = _sizing;
+            _listPanel.Sizing = _sizing;
+            _emptyLabel.Height = _sizing.Px(28);
+            _emptyLabel.Font = _sizing.HeadingFont;
+            if (_renameBox != null)
+            {
+                _renameBox.Height = compactButtonHeight;
+                _renameBox.Font = _sizing.BodyFont;
+            }
+
+            int minWidth = _sizing.Px(MinWindowWidth);
+            int minHeight = _sizing.Px(MinWindowHeight);
+            if (Width < minWidth || Height < minHeight)
+                Size = new Point(Math.Max(Width, minWidth), Math.Max(Height, minHeight));
         }
 
         private void ShowTabMenu(TodoTab tab)
@@ -499,6 +568,43 @@ namespace Taskmaster.UI
 
             if (parent != null)
             {
+                var visibleSubtasks = parent.Subtasks
+                    .Where(candidate =>
+                        !_hideDone ||
+                        !candidate.IsDone ||
+                        candidate == task)
+                    .OrderBy(candidate => candidate.Order)
+                    .ToList();
+                int subtaskIndex = visibleSubtasks.IndexOf(task);
+                if (subtaskIndex > 0)
+                {
+                    var moveSubtaskUp = menu.AddMenuItem("Move up");
+                    moveSubtaskUp.Click += (s, e) => ReorderSubtask(parent, task, () =>
+                        TaskOrdering.MoveByVisible(
+                            parent.Subtasks,
+                            task,
+                            -1,
+                            candidate => !_hideDone || !candidate.IsDone));
+
+                    var moveSubtaskToTop = menu.AddMenuItem("Move to top");
+                    moveSubtaskToTop.Click += (s, e) => ReorderSubtask(parent, task, () =>
+                        TaskOrdering.MoveToStart(parent.Subtasks, task));
+                }
+                if (subtaskIndex >= 0 && subtaskIndex < visibleSubtasks.Count - 1)
+                {
+                    var moveSubtaskDown = menu.AddMenuItem("Move down");
+                    moveSubtaskDown.Click += (s, e) => ReorderSubtask(parent, task, () =>
+                        TaskOrdering.MoveByVisible(
+                            parent.Subtasks,
+                            task,
+                            1,
+                            candidate => !_hideDone || !candidate.IsDone));
+
+                    var moveSubtaskToBottom = menu.AddMenuItem("Move to bottom");
+                    moveSubtaskToBottom.Click += (s, e) => ReorderSubtask(parent, task, () =>
+                        TaskOrdering.MoveToEnd(parent.Subtasks, task));
+                }
+
                 var deleteSubtask = menu.AddMenuItem("Delete subtask");
                 deleteSubtask.Click += (s, e) => _listPanel.DeleteSubtask(parent, task);
                 menu.Show(GameService.Input.Mouse.Position);
@@ -506,6 +612,14 @@ namespace Taskmaster.UI
             }
 
             var selectedTasks = _listPanel.GetSelectedTasks();
+            var visibleTasks = tab.Tasks
+                .Where(candidate =>
+                    !_hideDone ||
+                    !candidate.IsDone ||
+                    candidate == task)
+                .OrderBy(candidate => candidate.Order)
+                .ToList();
+            int taskIndex = visibleTasks.IndexOf(task);
             var edit = menu.AddMenuItem("Edit");
             edit.Click += (s, e) => _listPanel.BeginEdit(task);
 
@@ -521,10 +635,20 @@ namespace Taskmaster.UI
                 MarkDirtyAndRefresh();
             };
 
-            var moveUp = menu.AddMenuItem("Move up");
-            moveUp.Click += (s, e) => MoveTask(tab, task, -1);
-            var moveDown = menu.AddMenuItem("Move down");
-            moveDown.Click += (s, e) => MoveTask(tab, task, +1);
+            if (taskIndex > 0)
+            {
+                var moveUp = menu.AddMenuItem("Move up");
+                moveUp.Click += (s, e) => MoveTask(tab, task, -1);
+                var moveToTop = menu.AddMenuItem("Move to top");
+                moveToTop.Click += (s, e) => MoveTaskToEdge(tab, task, toStart: true);
+            }
+            if (taskIndex >= 0 && taskIndex < visibleTasks.Count - 1)
+            {
+                var moveDown = menu.AddMenuItem("Move down");
+                moveDown.Click += (s, e) => MoveTask(tab, task, +1);
+                var moveToBottom = menu.AddMenuItem("Move to bottom");
+                moveToBottom.Click += (s, e) => MoveTaskToEdge(tab, task, toStart: false);
+            }
 
             var otherTabs = _store.Tabs.Where(t => t.Id != tab.Id).OrderBy(t => t.Order).ToList();
             if (otherTabs.Count > 0)
@@ -597,21 +721,35 @@ namespace Taskmaster.UI
 
         private void MoveTask(TodoTab tab, TodoTask task, int delta)
         {
-            var ordered = tab.Tasks.OrderBy(t => t.Order).ToList();
-            int i = ordered.IndexOf(task);
-            int j = i + delta;
-            if (i < 0 || j < 0 || j >= ordered.Count) return;
-            var tmp = ordered[i]; ordered[i] = ordered[j]; ordered[j] = tmp;
-            for (int k = 0; k < ordered.Count; k++) ordered[k].Order = k;
-            _listPanel.ClearSelection();
+            _listPanel.PreserveScrollPosition();
+            if (!TaskOrdering.MoveByVisible(
+                    tab.Tasks,
+                    task,
+                    delta,
+                    candidate => !_hideDone || !candidate.IsDone))
+                return;
             MarkDirtyAndRefresh();
         }
 
-        private static void NormalizeTaskOrder(TodoTab tab)
+        private void MoveTaskToEdge(TodoTab tab, TodoTask task, bool toStart)
         {
-            var ordered = tab.Tasks.OrderBy(task => task.Order).ToList();
-            for (int i = 0; i < ordered.Count; i++) ordered[i].Order = i;
+            _listPanel.PreserveScrollPosition();
+            bool moved = toStart
+                ? TaskOrdering.MoveToStart(tab.Tasks, task)
+                : TaskOrdering.MoveToEnd(tab.Tasks, task);
+            if (!moved) return;
+            MarkDirtyAndRefresh();
         }
+
+        private void ReorderSubtask(TodoTask parent, TodoTask subtask, Func<bool> reorder)
+        {
+            _listPanel.PreserveScrollPosition();
+            if (!reorder()) return;
+            MarkDirtyAndRefresh();
+        }
+
+        private static void NormalizeTaskOrder(TodoTab tab) =>
+            TaskOrdering.Normalize(tab.Tasks);
 
         protected override void OnMouseEntered(Blish_HUD.Input.MouseEventArgs e)
         {
@@ -628,7 +766,28 @@ namespace Taskmaster.UI
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
+            _applyUnfocusedOpacityAtUtc = DateTime.UtcNow + WindowFadeSettleDelay;
             OnMinuteTick(DateTime.UtcNow);
+        }
+
+        public override void UpdateContainer(GameTime gameTime)
+        {
+            base.UpdateContainer(gameTime);
+            if (!_applyUnfocusedOpacityAtUtc.HasValue ||
+                DateTime.UtcNow < _applyUnfocusedOpacityAtUtc.Value)
+                return;
+
+            _applyUnfocusedOpacityAtUtc = null;
+            var windowBounds = new Rectangle(Left, Top, Width, Height);
+            Opacity = windowBounds.Contains(GameService.Input.Mouse.Position)
+                ? 1f
+                : _settings.UnfocusedOpacity.Value;
+        }
+
+        public override void Hide()
+        {
+            _applyUnfocusedOpacityAtUtc = null;
+            base.Hide();
         }
 
         protected override void DisposeControl()

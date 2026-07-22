@@ -2,17 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Blish_HUD;
 using Blish_HUD.Controls;
 using Microsoft.Xna.Framework;
 using Taskmaster.Models;
+using Taskmaster.Services;
 
 namespace Taskmaster.UI
 {
     /// <summary>
     /// The task list for one tab: parent rows, expanded subtask rows, and an inline
     /// edit panel. Rebuilds wholesale on any structural change. The "+ Add task" button
-    /// itself lives in TaskmasterWindow (a persistent top-of-window control, not part
-    /// of this scrollable list) - see AddNewTask.
+    /// itself lives in TaskmasterWindow's footer, outside this scrollable list - see
+    /// AddNewTask.
     /// </summary>
     public class TaskListPanel : FlowPanel
     {
@@ -24,6 +26,7 @@ namespace Taskmaster.UI
         private Guid? _newTaskId;
         private bool _hideDone;
         private bool _locked;
+        private bool _dragReorderingEnabled;
         private readonly List<TaskRow> _rows = new List<TaskRow>();
         private readonly List<Guid> _selectableTaskIds = new List<Guid>();
         private readonly TaskSelection _selection = new TaskSelection();
@@ -32,11 +35,19 @@ namespace Taskmaster.UI
         private float? _pendingScrollDistance;
         private int _scrollRestoreFrames;
         private Scrollbar _scrollbar;
+        private TaskmasterSizing _sizing = new TaskmasterSizing(1f, 1f);
+        private TaskRow _dragCandidate;
+        private TaskRow _dropTarget;
+        private Point _dragStart;
+        private bool _dragging;
+        private bool _dropAfter;
+        private bool _selectSingleOnRelease;
         private static readonly FieldInfo PanelScrollbarField =
             typeof(Panel).GetField("_panelScrollbar", BindingFlags.NonPublic | BindingFlags.Instance);
         // The editor for _editingTaskId, if one is open - the row's checkmark button
         // has no editor of its own to call Apply() on, so it goes through this.
         private TaskEditPanel _activeEditPanel;
+        private TaskEditPanel.Draft _editingDraft;
 
         /// <summary>Any data mutation happened (check, edit, delete...). Window persists + refreshes badges.</summary>
         public event Action DataChanged;
@@ -48,7 +59,19 @@ namespace Taskmaster.UI
         {
             FlowDirection = ControlFlowDirection.SingleTopToBottom;
             CanScroll = true;
-            ControlPadding = new Vector2(0, 2);
+            ControlPadding = new Vector2(0, _sizing.Px(2));
+        }
+
+        public TaskmasterSizing Sizing
+        {
+            get => _sizing;
+            set
+            {
+                _sizing = value ?? new TaskmasterSizing(1f, 1f);
+                ControlPadding = new Vector2(0, _sizing.Px(2));
+                PreserveScrollPosition();
+                Rebuild();
+            }
         }
 
         public bool HideDone
@@ -68,11 +91,24 @@ namespace Taskmaster.UI
             }
         }
 
+        public bool DragReorderingEnabled
+        {
+            get => _dragReorderingEnabled;
+            set
+            {
+                _dragReorderingEnabled = value;
+                if (!value) CancelDrag();
+                foreach (var row in _rows)
+                    row.DragReorderingEnabled = value;
+            }
+        }
+
         public void ShowTab(TodoTab tab)
         {
             if (_tab?.Id != tab?.Id)
             {
                 _editingTaskId = null;
+                _editingDraft = null;
                 _selection.Clear();
                 _pendingScrollTaskId = null;
                 _scrollApplyFrames = 0;
@@ -126,6 +162,7 @@ namespace Taskmaster.UI
             PreserveScrollDistance();
             _editingTaskId = task.Id;
             _newTaskId = null;
+            _editingDraft = null;
             Rebuild();
         }
 
@@ -138,6 +175,7 @@ namespace Taskmaster.UI
         {
             _editingTaskId = task.Id;
             _newTaskId = task.Id;
+            _editingDraft = null;
             _pendingScrollTaskId = task.Id;
             _scrollApplyFrames = 5;
             Rebuild();
@@ -150,6 +188,11 @@ namespace Taskmaster.UI
 
         public void Rebuild()
         {
+            CancelDrag();
+            if (_activeEditPanel != null &&
+                _editingTaskId.HasValue &&
+                _activeEditPanel.TaskId == _editingTaskId.Value)
+                _editingDraft = _activeEditPanel.CaptureDraft();
             foreach (var c in Children.ToList()) c.Dispose();
             _rows.Clear();
             _selectableTaskIds.Clear();
@@ -166,7 +209,7 @@ namespace Taskmaster.UI
                 AddRow(task, isSubtask: false, nowUtc);
 
                 if (task.HasSubtasks && _expanded.Contains(task.Id))
-                    foreach (var sub in task.Subtasks)
+                    foreach (var sub in task.Subtasks.OrderBy(subtask => subtask.Order))
                     {
                         if (_hideDone && sub.IsDone) continue;
                         AddRow(sub, isSubtask: true, nowUtc, parent: task);
@@ -183,6 +226,9 @@ namespace Taskmaster.UI
         public override void UpdateContainer(GameTime gameTime)
         {
             base.UpdateContainer(gameTime);
+
+            if (_dragging)
+                AutoScrollDuringDrag();
 
             if (_pendingScrollDistance.HasValue && _scrollRestoreFrames > 0)
             {
@@ -203,12 +249,14 @@ namespace Taskmaster.UI
 
         private void AddRow(TodoTask task, bool isSubtask, DateTime nowUtc, TodoTask parent = null)
         {
-            var row = new TaskRow(task, isSubtask)
+            var row = new TaskRow(task, isSubtask, _sizing)
             {
                 Parent = this,
                 Width = ContentRegion.Width,
                 IsExpanded = _expanded.Contains(task.Id),
                 Locked = _locked,
+                DragReorderingEnabled = _dragReorderingEnabled,
+                ParentTask = parent,
                 IsSelected = !isSubtask && _selection.IsSelected(task.Id),
                 IsEditing = task.Id == _editingTaskId,
                 // A subtask's countdown reflects the parent's shared anchor, not its own -
@@ -245,6 +293,7 @@ namespace Taskmaster.UI
                     PreserveScrollDistance();
                     _editingTaskId = null;
                     _newTaskId = null;
+                    _editingDraft = null;
                     Rebuild();
                 }
                 else BeginEdit(task);
@@ -266,18 +315,26 @@ namespace Taskmaster.UI
                 CopyToClipboardRequested?.Invoke(task);
                 row.FlashCopied();
             };
+            row.DragCandidateRequested += selectSingleOnRelease =>
+                BeginDrag(row, selectSingleOnRelease);
         }
 
         private void AddEditPanel(TodoTask task, bool isNew = false)
         {
-            var edit = new TaskEditPanel(task, isNew)
+            var edit = new TaskEditPanel(task, isNew, _sizing, _editingDraft)
             {
                 Parent = this,
                 Width = ContentRegion.Width
             };
             _activeEditPanel = edit;
             edit.ContentHeightChanging += PreserveScrollDistance;
-            edit.Saved += () => { _editingTaskId = null; _newTaskId = null; AfterMutation(); };
+            edit.Saved += () =>
+            {
+                _editingTaskId = null;
+                _newTaskId = null;
+                _editingDraft = null;
+                AfterMutation();
+            };
         }
 
         private void AfterMutation()
@@ -292,7 +349,7 @@ namespace Taskmaster.UI
                 row.IsSelected = _selection.IsSelected(row.Task.Id);
         }
 
-        private void PreserveScrollDistance()
+        public void PreserveScrollPosition()
         {
             var scrollbar = GetScrollbar();
             if (scrollbar == null) return;
@@ -301,12 +358,140 @@ namespace Taskmaster.UI
             _scrollRestoreFrames = 5;
         }
 
+        private void PreserveScrollDistance() => PreserveScrollPosition();
+
         private Scrollbar GetScrollbar()
         {
             _scrollbar = _scrollbar != null && _scrollbar.Parent != null
                 ? _scrollbar
                 : PanelScrollbarField?.GetValue(this) as Scrollbar;
             return _scrollbar;
+        }
+
+        private void BeginDrag(TaskRow row, bool selectSingleOnRelease)
+        {
+            if (!_dragReorderingEnabled || _locked || row == null) return;
+
+            CancelDrag();
+            _dragCandidate = row;
+            _selectSingleOnRelease = selectSingleOnRelease;
+            _dragStart = GameService.Input.Mouse.Position;
+            GameService.Input.Mouse.MouseMoved += OnGlobalMouseMoved;
+            GameService.Input.Mouse.LeftMouseButtonReleased += OnGlobalMouseReleased;
+        }
+
+        private void OnGlobalMouseMoved(object sender, Blish_HUD.Input.MouseEventArgs e)
+        {
+            if (_dragCandidate == null) return;
+
+            var mouse = GameService.Input.Mouse.Position;
+            if (!_dragging &&
+                Math.Abs(mouse.X - _dragStart.X) + Math.Abs(mouse.Y - _dragStart.Y) >= _sizing.Px(6))
+                _dragging = true;
+
+            if (_dragging) UpdateDropTarget();
+        }
+
+        private void UpdateDropTarget()
+        {
+            if (!_dragging || _dragCandidate == null) return;
+            var mouse = GameService.Input.Mouse.Position;
+            var eligibleRows = _rows
+                .Where(row =>
+                    row != _dragCandidate &&
+                    ReferenceEquals(row.ParentTask, _dragCandidate.ParentTask))
+                .ToList();
+            if (eligibleRows.Count == 0)
+            {
+                SetDropTarget(null, false);
+                return;
+            }
+
+            var target = eligibleRows
+                .OrderBy(row => Math.Abs(mouse.Y - (row.AbsoluteBounds.Top + row.Height / 2)))
+                .First();
+            bool after = mouse.Y >= target.AbsoluteBounds.Top + target.Height / 2;
+            SetDropTarget(target, after);
+        }
+
+        private void OnGlobalMouseReleased(object sender, Blish_HUD.Input.MouseEventArgs e)
+        {
+            var draggedRow = _dragCandidate;
+            var targetRow = _dropTarget;
+            bool wasDragging = _dragging;
+            bool insertAfter = _dropAfter;
+            bool selectSingleOnRelease = _selectSingleOnRelease;
+            CancelDrag();
+
+            if (!wasDragging)
+            {
+                if (selectSingleOnRelease && draggedRow != null)
+                {
+                    _selection.Select(
+                        draggedRow.Task.Id,
+                        _selectableTaskIds,
+                        extendRange: false,
+                        toggle: false);
+                    ApplySelectionToRows();
+                }
+                return;
+            }
+            if (draggedRow == null || targetRow == null) return;
+
+            IList<TodoTask> siblings = draggedRow.ParentTask == null
+                ? (IList<TodoTask>)_tab?.Tasks
+                : draggedRow.ParentTask.Subtasks;
+            if (siblings == null) return;
+
+            int sourceIndex = TaskOrdering.OrderedIndexOf(siblings, draggedRow.Task);
+            int targetIndex = TaskOrdering.OrderedIndexOf(siblings, targetRow.Task);
+            if (sourceIndex < 0 || targetIndex < 0) return;
+
+            if (insertAfter) targetIndex++;
+            if (sourceIndex < targetIndex) targetIndex--;
+
+            PreserveScrollPosition();
+            if (TaskOrdering.MoveToIndex(siblings, draggedRow.Task, targetIndex))
+                AfterMutation();
+        }
+
+        private void SetDropTarget(TaskRow target, bool after)
+        {
+            if (_dropTarget != null)
+                _dropTarget.IsDropTarget = false;
+
+            _dropTarget = target;
+            _dropAfter = after;
+            if (_dropTarget != null)
+            {
+                _dropTarget.DropAfter = after;
+                _dropTarget.IsDropTarget = true;
+            }
+        }
+
+        private void AutoScrollDuringDrag()
+        {
+            var scrollbar = GetScrollbar();
+            if (scrollbar == null) return;
+
+            int relativeY = GameService.Input.Mouse.Position.Y - AbsoluteBounds.Top;
+            int edge = _sizing.Px(34);
+            const float scrollStep = 0.018f;
+            if (relativeY < edge)
+                scrollbar.ScrollDistance = Math.Max(0f, scrollbar.ScrollDistance - scrollStep);
+            else if (relativeY > Height - edge)
+                scrollbar.ScrollDistance = Math.Min(1f, scrollbar.ScrollDistance + scrollStep);
+            UpdateDropTarget();
+        }
+
+        private void CancelDrag()
+        {
+            GameService.Input.Mouse.MouseMoved -= OnGlobalMouseMoved;
+            GameService.Input.Mouse.LeftMouseButtonReleased -= OnGlobalMouseReleased;
+            SetDropTarget(null, false);
+            _dragCandidate = null;
+            _dragging = false;
+            _selectSingleOnRelease = false;
         }
 
         private void ScrollPendingTaskIntoView()
@@ -335,6 +520,12 @@ namespace Taskmaster.UI
                 target.Bottom - viewportHeight + bottomPadding,
                 scrollableRange));
             scrollbar.ScrollDistance = (float)targetOffset / scrollableRange;
+        }
+
+        protected override void DisposeControl()
+        {
+            CancelDrag();
+            base.DisposeControl();
         }
     }
 }

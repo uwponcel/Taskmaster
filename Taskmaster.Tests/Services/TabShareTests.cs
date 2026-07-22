@@ -12,7 +12,12 @@ namespace Taskmaster.Tests.Services
             var tab = new TodoTab { Name = "Dailies" };
             var t = new TodoTask { Name = "PSNA", Schedule = ResetScheduleType.Psna, TargetCount = 3, ClipboardContent = "[&code]" };
             t.Increment(DateTime.UtcNow);
-            t.Subtasks.Add(new TodoTask { Name = "child" });
+            t.Subtasks.Add(new TodoTask
+            {
+                Name = "child",
+                ClipboardContent = "[&child]",
+                Order = 2
+            });
             tab.Tasks.Add(t);
             return tab;
         }
@@ -31,6 +36,8 @@ namespace Taskmaster.Tests.Services
             Assert.Equal(3, imported.TargetCount);
             Assert.Equal("[&code]", imported.ClipboardContent);
             Assert.Single(imported.Subtasks);
+            Assert.Equal("[&child]", imported.Subtasks[0].ClipboardContent);
+            Assert.Equal(2, imported.Subtasks[0].Order);
             Assert.NotEqual(tab.Id, result.Tab.Id);
             Assert.NotEqual(tab.Tasks[0].Id, imported.Id);
             Assert.Equal(0, imported.CurrentCount);

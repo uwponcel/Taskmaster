@@ -49,9 +49,11 @@
         <Compile Include="Services\ResetEngine.cs"/>
         <Compile Include="Services\TaskStore.cs"/>
         <Compile Include="Services\TabShare.cs"/>
+        <Compile Include="Services\TaskOrdering.cs"/>
         <Compile Include="Settings\ModuleSettings.cs"/>
         <Compile Include="Settings\TaskmasterSettingsView.cs"/>
         <Compile Include="UI\TaskmasterTheme.cs"/>
+        <Compile Include="UI\TaskmasterSizing.cs"/>
         <Compile Include="UI\TaskSelection.cs"/>
         <Compile Include="UI\TabStrip.cs"/>
         <Compile Include="UI\TaskRow.cs"/>

@@ -5,6 +5,7 @@ using Blish_HUD;
 using Blish_HUD.Controls;
 using Microsoft.Xna.Framework;
 using Taskmaster.Models;
+using Taskmaster.Services;
 using Taskmaster.UI.Controls;
 
 namespace Taskmaster.UI
@@ -12,6 +13,19 @@ namespace Taskmaster.UI
     /// <summary>Inline task editor. Edits apply to the task on Save (checkmark); Cancel discards field edits.</summary>
     public class TaskEditPanel : Panel
     {
+        public sealed class Draft
+        {
+            public string Name;
+            public ResetScheduleType Schedule;
+            public string LocalTime;
+            public string Duration;
+            public string Count;
+            public string Clipboard;
+            public string Notes;
+            public string PendingSubtask;
+            public List<TodoTask> Subtasks;
+        }
+
         private static readonly Dictionary<ResetScheduleType, string> ScheduleNames =
             new Dictionary<ResetScheduleType, string>
             {
@@ -26,11 +40,8 @@ namespace Taskmaster.UI
                 { ResetScheduleType.Duration, "Duration" }
             };
 
-        private const int LabelWidth = 88;
-        private const int RowH = 30;
-        private const int FieldX = LabelWidth + 12;
-
         private readonly TodoTask _task;
+        private readonly TaskmasterSizing _sizing;
         private readonly TextBox _nameBox;
         private readonly Dropdown _scheduleDropdown;
         private readonly TextBox _localTimeBox;    // "HH:mm" - shown only for the Local time schedule
@@ -52,11 +63,17 @@ namespace Taskmaster.UI
 
         public event Action Saved;
         public event Action ContentHeightChanging;
+        public Guid TaskId => _task.Id;
 
-        public TaskEditPanel(TodoTask task, bool isNew = false)
+        public TaskEditPanel(TodoTask task, bool isNew, TaskmasterSizing sizing, Draft draft = null)
         {
             _task = task;
-            _workingSubtasks = task.Subtasks.ToList();
+            _sizing = sizing ?? new TaskmasterSizing(1f, 1f);
+            _workingSubtasks = (draft?.Subtasks ?? task.Subtasks)
+                .OrderBy(subtask => subtask.Order)
+                .Select(CloneForEditing)
+                .ToList();
+            TaskOrdering.Normalize(_workingSubtasks);
             // Height is computed and set manually in LayoutTrailing() instead of
             // AutoSize - an AutoSize panel's height doesn't resolve synchronously
             // within the same call that just changed its children (bit us twice
@@ -69,49 +86,70 @@ namespace Taskmaster.UI
             // A freshly created task starts with its name empty and the placeholder
             // showing its fallback ("New task"), so the first keystroke replaces it
             // instead of requiring the user to clear it first.
-            _nameBox = AddField("Name", ref y, isNew ? "" : task.Name);
+            _nameBox = AddField("Name", ref y, draft?.Name ?? (isNew ? "" : task.Name));
             if (isNew) _nameBox.PlaceholderText = task.Name;
 
             AddLabel("Resets", y);
-            _scheduleDropdown = new Dropdown { Parent = this, Left = FieldX, Top = y, Width = 220 };
+            _scheduleDropdown = new Dropdown
+            {
+                Parent = this,
+                Left = FieldX,
+                Top = y,
+                Width = _sizing.Px(220),
+                Height = _sizing.Px(27)
+            };
             foreach (var name in ScheduleNames.Values) _scheduleDropdown.Items.Add(name);
-            _scheduleDropdown.SelectedItem = ScheduleNames[task.Schedule];
+            _scheduleDropdown.SelectedItem = ScheduleNames[draft?.Schedule ?? task.Schedule];
             y += RowH;
             _dynamicRowsStartY = y;
 
             var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.Local);
             _localTimeBox = AddDynamicField("Local time",
-                task.LocalResetTime.HasValue
+                draft?.LocalTime ?? (task.LocalResetTime.HasValue
                     ? $"{task.LocalResetTime.Value.Hours:00}:{task.LocalResetTime.Value.Minutes:00}"
-                    : $"{nowLocal.Hour:00}:{nowLocal.Minute:00}",
+                    : $"{nowLocal.Hour:00}:{nowLocal.Minute:00}"),
                 () => SelectedSchedule == ResetScheduleType.LocalTime);
             _durationBox = AddDynamicField("Cooldown",
-                task.ResetDuration.HasValue ? task.ResetDuration.Value.ToString() : "1:00:00",
+                draft?.Duration ??
+                (task.ResetDuration.HasValue ? task.ResetDuration.Value.ToString() : "1:00:00"),
                 () => SelectedSchedule == ResetScheduleType.Duration);
             // A task with subtasks derives IsDone from its children and Apply() forces
             // TargetCount back to 1 regardless of what's typed here, so showing an
             // editable Count field alongside subtasks let you "set" a number that was
             // always going to be silently discarded on save.
-            _countBox = AddDynamicField("Count", task.TargetCount.ToString(), () => _workingSubtasks.Count == 0);
-            _clipboardBox = AddDynamicField("Clipboard", task.ClipboardContent ?? "");
-            _notesBox = AddDynamicField("Notes", task.Notes ?? "");
+            _countBox = AddDynamicField(
+                "Count",
+                draft?.Count ?? task.TargetCount.ToString(),
+                () => _workingSubtasks.Count == 0);
+            _clipboardBox = AddDynamicField("Clipboard", draft?.Clipboard ?? task.ClipboardContent ?? "");
+            _notesBox = AddDynamicField("Notes", draft?.Notes ?? task.Notes ?? "");
 
             _subtasksLabel = AddLabel("Subtasks", y);
             _subtaskPanel = new Panel
             {
-                Parent = this, Left = FieldX, Width = 300,
+                Parent = this, Left = FieldX, Width = _sizing.Px(300),
                 HeightSizingMode = SizingMode.AutoSize
             };
             _newSubtaskBox = new TextBox
             {
-                Parent = this, Left = FieldX, Width = 220, Height = 24,
-                PlaceholderText = "add subtask, press Enter"
+                Parent = this,
+                Left = FieldX,
+                Width = _sizing.Px(220),
+                Height = _sizing.Px(24),
+                Font = _sizing.BodyFont,
+                PlaceholderText = "add subtask, press Enter",
+                Text = draft?.PendingSubtask ?? ""
             };
             _newSubtaskBox.EnterPressed += (s, e) =>
             {
                 if (string.IsNullOrWhiteSpace(_newSubtaskBox.Text)) return;
                 ContentHeightChanging?.Invoke();
-                _workingSubtasks.Add(new TodoTask { Name = _newSubtaskBox.Text.Trim(), Schedule = _task.Schedule });
+                _workingSubtasks.Add(new TodoTask
+                {
+                    Name = _newSubtaskBox.Text.Trim(),
+                    Order = _workingSubtasks.Count,
+                    Schedule = _task.Schedule
+                });
                 _newSubtaskBox.Text = "";
                 RebuildSubtaskList();
             };
@@ -123,8 +161,25 @@ namespace Taskmaster.UI
             if (isNew) _nameBox.Focused = true;
         }
 
-        private const int SubtaskRowHeight = 24;
-        private const int BottomPadding = 16;
+        public Draft CaptureDraft() =>
+            new Draft
+            {
+                Name = _nameBox.Text,
+                Schedule = SelectedSchedule,
+                LocalTime = _localTimeBox.Text,
+                Duration = _durationBox.Text,
+                Count = _countBox.Text,
+                Clipboard = _clipboardBox.Text,
+                Notes = _notesBox.Text,
+                PendingSubtask = _newSubtaskBox.Text,
+                Subtasks = _workingSubtasks.Select(CloneForEditing).ToList()
+            };
+
+        private int LabelWidth => _sizing.Px(88);
+        private int RowH => _sizing.Px(30);
+        private int FieldX => LabelWidth + _sizing.Px(12);
+        private int SubtaskRowHeight => _sizing.Px(28);
+        private int BottomPadding => _sizing.Px(16);
 
         private void LayoutTrailing()
         {
@@ -134,7 +189,7 @@ namespace Taskmaster.UI
             // reading it here returned the PREVIOUS height and the textbox below
             // ended up overlapping the last subtask row.
             int subtaskAreaHeight = _workingSubtasks.Count * SubtaskRowHeight;
-            int y = _subtaskPanel.Top + subtaskAreaHeight + 4;
+            int y = _subtaskPanel.Top + subtaskAreaHeight + _sizing.Px(4);
             _newSubtaskBox.Top = y;
 
             int newHeight = _newSubtaskBox.Bottom + BottomPadding;
@@ -145,15 +200,30 @@ namespace Taskmaster.UI
         {
             return new Label
             {
-                Parent = this, Left = 8, Top = y + 4, Width = LabelWidth, Height = 20,
-                Text = text, TextColor = TaskmasterTheme.MutedCream
+                Parent = this,
+                Left = _sizing.Px(8),
+                Top = y + _sizing.Px(4),
+                Width = LabelWidth,
+                Height = _sizing.Px(20),
+                Text = text,
+                TextColor = TaskmasterTheme.MutedCream,
+                Font = _sizing.BodyFont
             };
         }
 
         private TextBox AddField(string label, ref int y, string value)
         {
             AddLabel(label, y);
-            var box = new TextBox { Parent = this, Left = FieldX, Top = y, Width = 300, Height = 24, Text = value };
+            var box = new TextBox
+            {
+                Parent = this,
+                Left = FieldX,
+                Top = y,
+                Width = _sizing.Px(300),
+                Height = _sizing.Px(24),
+                Text = value,
+                Font = _sizing.BodyFont
+            };
             y += RowH;
             return box;
         }
@@ -166,10 +236,23 @@ namespace Taskmaster.UI
         {
             var lbl = new Label
             {
-                Parent = this, Left = 8, Width = LabelWidth, Height = 20,
-                Text = label, TextColor = TaskmasterTheme.MutedCream
+                Parent = this,
+                Left = _sizing.Px(8),
+                Width = LabelWidth,
+                Height = _sizing.Px(20),
+                Text = label,
+                TextColor = TaskmasterTheme.MutedCream,
+                Font = _sizing.BodyFont
             };
-            var box = new TextBox { Parent = this, Left = FieldX, Width = 300, Height = 24, Text = value };
+            var box = new TextBox
+            {
+                Parent = this,
+                Left = FieldX,
+                Width = _sizing.Px(300),
+                Height = _sizing.Px(24),
+                Text = value,
+                Font = _sizing.BodyFont
+            };
             _dynamicRows.Add((lbl, box, shouldShow));
             return box;
         }
@@ -187,7 +270,7 @@ namespace Taskmaster.UI
                 row.Field.Visible = show;
                 if (show)
                 {
-                    row.Label.Top = y + 4;
+                    row.Label.Top = y + _sizing.Px(4);
                     row.Field.Top = y;
                     y += RowH;
                 }
@@ -206,14 +289,40 @@ namespace Taskmaster.UI
             int y = 0;
             foreach (var sub in _workingSubtasks.ToList())
             {
-                var lbl = new Label
+                var nameBox = new TextBox
                 {
-                    Parent = _subtaskPanel, Left = 0, Top = y, Width = 240, Height = 22,
-                    Text = sub.Name, TextColor = TaskmasterTheme.CreamWhite
+                    Parent = _subtaskPanel,
+                    Left = 0,
+                    Top = y,
+                    Width = _sizing.Px(118),
+                    Height = _sizing.Px(26),
+                    Text = sub.Name,
+                    Font = _sizing.BodyFont,
+                    PlaceholderText = "Subtask name"
+                };
+                var clipboardBox = new TextBox
+                {
+                    Parent = _subtaskPanel,
+                    Left = _sizing.Px(122),
+                    Top = y,
+                    Width = _sizing.Px(126),
+                    Height = _sizing.Px(26),
+                    Text = sub.ClipboardContent ?? "",
+                    Font = _sizing.BodyFont,
+                    PlaceholderText = "waypoint / chat code"
                 };
                 var remove = new IconButton(TaskmasterIcons.Cancel, TaskmasterTheme.IconGlyph)
-                { Parent = _subtaskPanel, Left = 246, Top = y, Width = 22, Height = 22 };
+                {
+                    Parent = _subtaskPanel,
+                    Left = _sizing.Px(252),
+                    Top = y,
+                    Width = _sizing.Px(26),
+                    Height = _sizing.Px(26),
+                    GlyphSize = _sizing.Px(18)
+                };
                 var captured = sub;
+                nameBox.TextChanged += (s, e) => captured.Name = nameBox.Text;
+                clipboardBox.TextChanged += (s, e) => captured.ClipboardContent = clipboardBox.Text;
                 remove.Click += (s, e) =>
                 {
                     ContentHeightChanging?.Invoke();
@@ -248,9 +357,16 @@ namespace Taskmaster.UI
             _task.ClipboardContent = string.IsNullOrWhiteSpace(_clipboardBox.Text) ? null : _clipboardBox.Text;
             _task.Notes = string.IsNullOrWhiteSpace(_notesBox.Text) ? null : _notesBox.Text;
 
-            _task.Subtasks = _workingSubtasks;
+            _task.Subtasks = _workingSubtasks
+                .Where(subtask => !string.IsNullOrWhiteSpace(subtask.Name))
+                .ToList();
+            TaskOrdering.Normalize(_task.Subtasks);
             foreach (var s in _task.Subtasks)
             {
+                s.Name = s.Name.Trim();
+                s.ClipboardContent = string.IsNullOrWhiteSpace(s.ClipboardContent)
+                    ? null
+                    : s.ClipboardContent.Trim();
                 // The whole group shares one schedule - a subtask keeping its own stale
                 // LocalResetTime/ResetDuration would make its individual reset sweep
                 // (ResetEngine.ApplyResetRecursive) fire on its own timing instead of the
@@ -265,6 +381,27 @@ namespace Taskmaster.UI
             _task.SyncGroupAnchor(DateTime.UtcNow);
 
             Saved?.Invoke();
+        }
+
+        private static TodoTask CloneForEditing(TodoTask source)
+        {
+            var clone = new TodoTask
+            {
+                Id = source.Id,
+                Name = source.Name,
+                Order = source.Order,
+                Schedule = source.Schedule,
+                LocalResetTime = source.LocalResetTime,
+                ResetDuration = source.ResetDuration,
+                ClipboardContent = source.ClipboardContent,
+                Notes = source.Notes,
+                TargetCount = source.TargetCount,
+                CurrentCount = source.CurrentCount,
+                LastCompletedUtc = source.LastCompletedUtc,
+                LastActivityUtc = source.LastActivityUtc
+            };
+            clone.Subtasks = source.Subtasks?.Select(CloneForEditing).ToList() ?? new List<TodoTask>();
+            return clone;
         }
     }
 }

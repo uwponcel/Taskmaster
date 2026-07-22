@@ -13,11 +13,10 @@ namespace Taskmaster.UI.Controls
     /// </summary>
     public class IconButton : StandardButton
     {
-        private const int IconSize = 16;
-
         private Color _tint;
         private Texture2D _iconTexture;
         private bool _selected;
+        private int _glyphSize = 16;
 
         public IconButton(Texture2D icon, Color tint)
         {
@@ -43,6 +42,18 @@ namespace Taskmaster.UI.Controls
             set { if (_selected == value) return; _selected = value; Invalidate(); }
         }
 
+        public int GlyphSize
+        {
+            get => _glyphSize;
+            set
+            {
+                int next = System.Math.Max(1, value);
+                if (_glyphSize == next) return;
+                _glyphSize = next;
+                Invalidate();
+            }
+        }
+
         protected override void Paint(SpriteBatch spriteBatch, Rectangle bounds)
         {
             base.Paint(spriteBatch, bounds);
@@ -55,7 +66,12 @@ namespace Taskmaster.UI.Controls
             }
 
             var glyphColor = _selected ? TaskmasterTheme.ToggleActiveGlyph : _tint;
-            var iconBounds = new Rectangle(_size.X / 2 - IconSize / 2, _size.Y / 2 - IconSize / 2, IconSize, IconSize);
+            int iconSize = System.Math.Min(_glyphSize, System.Math.Min(_size.X, _size.Y));
+            var iconBounds = new Rectangle(
+                _size.X / 2 - iconSize / 2,
+                _size.Y / 2 - iconSize / 2,
+                iconSize,
+                iconSize);
             spriteBatch.DrawOnCtrl(this, _iconTexture, iconBounds, glyphColor);
         }
     }

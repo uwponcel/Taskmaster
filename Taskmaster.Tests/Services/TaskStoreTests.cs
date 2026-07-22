@@ -37,7 +37,12 @@ namespace Taskmaster.Tests.Services
             store.Load();
             var tab = new TodoTab { Name = "Dailies" };
             var task = new TodoTask { Name = "PSNA", Schedule = ResetScheduleType.Psna, TargetCount = 3, Notes = "n" };
-            task.Subtasks.Add(new TodoTask { Name = "child" });
+            task.Subtasks.Add(new TodoTask
+            {
+                Name = "child",
+                ClipboardContent = "[&subtask]",
+                Order = 4
+            });
             tab.Tasks.Add(task);
             store.Tabs.Add(tab);
             store.Save();
@@ -51,6 +56,8 @@ namespace Taskmaster.Tests.Services
             Assert.Equal(ResetScheduleType.Psna, loaded.Schedule);
             Assert.Equal(3, loaded.TargetCount);
             Assert.Single(loaded.Subtasks);
+            Assert.Equal("[&subtask]", loaded.Subtasks[0].ClipboardContent);
+            Assert.Equal(4, loaded.Subtasks[0].Order);
             Assert.Equal(task.Id, loaded.Id);
         }
 

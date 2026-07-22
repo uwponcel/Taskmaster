@@ -13,24 +13,16 @@ namespace Taskmaster.UI
 {
     public class TaskRow : Control
     {
-        private const int RowHeight = 30;
-        private const int SubtaskIndent = 22;
-        private const int CheckboxSize = 16;
-        private const int IconSize = 14;
-        private const int ChevronHitSize = 24;
-        private const int ChevronIconSize = 18;
-        private const int EditIconSize = 24;
-        private const int EditActionIconSize = 28;
-        private const int Pad = 6;
-
         private static readonly TimeSpan DueSoonThreshold = TimeSpan.FromHours(1);
 
         private readonly TodoTask _task;
         private readonly bool _isSubtask;
+        private readonly TaskmasterSizing _sizing;
         private string _countdownText = "";
         private bool _dueSoon;
         private bool _hover;
         private bool _isSelected;
+        private bool _isDropTarget;
         private DateTime _copiedFlashUntilUtc;
 
         private Rectangle _chipBounds;
@@ -40,8 +32,21 @@ namespace Taskmaster.UI
         private Rectangle _saveBounds;
 
         public TodoTask Task => _task;
+        public TodoTask ParentTask { get; set; }
         public bool IsExpanded { get; set; }
         public bool Locked { get; set; }
+        public bool DragReorderingEnabled { get; set; }
+        public bool DropAfter { get; set; }
+        public bool IsDropTarget
+        {
+            get => _isDropTarget;
+            set
+            {
+                if (_isDropTarget == value) return;
+                _isDropTarget = value;
+                Invalidate();
+            }
+        }
         public bool IsSelected
         {
             get => _isSelected;
@@ -66,14 +71,26 @@ namespace Taskmaster.UI
         public event Action ExpandToggled;          // chevron click (parents only)
         public event Action CopyRequested;          // clipboard icon click
         public event Action<bool, bool> SelectionRequested; // Shift extends a range, Ctrl toggles one row
+        public event Action<bool> DragCandidateRequested;
 
-        public TaskRow(TodoTask task, bool isSubtask)
+        public TaskRow(TodoTask task, bool isSubtask, TaskmasterSizing sizing)
         {
             _task = task;
             _isSubtask = isSubtask;
+            _sizing = sizing ?? new TaskmasterSizing(1f, 1f);
             Height = RowHeight;
         }
 
+        private int RowHeight => _sizing.Px(34);
+        private int SubtaskIndent => _sizing.Px(22);
+        private int CheckboxSize => _sizing.Px(18);
+        private int InlineIconHitSize => _sizing.Px(26);
+        private int InlineIconSize => _sizing.Px(18);
+        private int ChevronHitSize => _sizing.Px(26);
+        private int ChevronIconSize => _sizing.Px(19);
+        private int EditIconSize => _sizing.Px(24);
+        private int EditActionIconSize => _sizing.Px(28);
+        private int Pad => _sizing.Px(6);
         private int LeftOffset => Pad + (_isSubtask ? SubtaskIndent : 0);
 
         // The list panel's Scrollbar (Blish HUD Controls.Scrollbar, 12px wide) overlaps
@@ -81,7 +98,7 @@ namespace Taskmaster.UI
         // hit-tested flush against Width would have its clicks swallowed by the
         // scrollbar whenever the list is tall enough to need one. Keep all right-side
         // interactive elements clear of that zone.
-        private const int ScrollbarMargin = 20;
+        private int ScrollbarMargin => _sizing.Px(20);
 
         // Right side, not left - so the checkbox/name column starts at the same X on
         // every row whether or not that particular task has subtasks.
@@ -135,6 +152,7 @@ namespace Taskmaster.UI
         public void FlashCopied()
         {
             _copiedFlashUntilUtc = DateTime.UtcNow.AddSeconds(1.5);
+            UpdateTooltip();
             Invalidate();
         }
 
@@ -142,14 +160,21 @@ namespace Taskmaster.UI
         {
             base.OnMouseMoved(e);
             _hover = true;
-            // The row's tooltip otherwise shows the task's Notes - swap it for a
-            // dedicated hint while directly over the copy-to-clipboard icon, same
-            // dynamic-tooltip approach TabStrip uses for its "+" button.
-            BasicTooltipText = HasClipboard && _clipboardBounds.Contains(RelativeMousePosition)
-                ? "Click to copy to clipboard"
-                : (string.IsNullOrEmpty(_task.Notes) ? null : _task.Notes);
+            UpdateTooltip();
             Invalidate();
         }
+
+        private void UpdateTooltip()
+        {
+            // The row's tooltip otherwise shows the task's notes. Over the copy icon,
+            // show temporary confirmation after copying, then restore the normal hint.
+            BasicTooltipText = HasClipboard && _clipboardBounds.Contains(RelativeMousePosition)
+                ? DateTime.UtcNow < _copiedFlashUntilUtc
+                    ? "Copied!"
+                    : "Click to copy to clipboard"
+                : (string.IsNullOrEmpty(_task.Notes) ? null : _task.Notes);
+        }
+
         protected override void OnMouseLeft(MouseEventArgs e) { base.OnMouseLeft(e); _hover = false; Invalidate(); }
 
         protected override void OnLeftMouseButtonPressed(MouseEventArgs e)
@@ -162,13 +187,22 @@ namespace Taskmaster.UI
             if (!Locked && _saveBounds != Rectangle.Empty && _saveBounds.Contains(p)) { SaveRequested?.Invoke(); return; }
             if (!Locked && _pencilBounds != Rectangle.Empty && _pencilBounds.Contains(p)) { EditRequested?.Invoke(); return; }
             if (HasClipboard && _clipboardBounds.Contains(p)) { CopyRequested?.Invoke(); return; }
+            bool selectSingleOnRelease = false;
             if (!Locked && !_isSubtask)
             {
                 var modifiers = GameService.Input.Keyboard.ActiveModifiers;
-                SelectionRequested?.Invoke(
-                    modifiers.HasFlag(ModifierKeys.Shift),
-                    modifiers.HasFlag(ModifierKeys.Ctrl));
+                bool extendRange = modifiers.HasFlag(ModifierKeys.Shift);
+                bool toggle = modifiers.HasFlag(ModifierKeys.Ctrl);
+                selectSingleOnRelease =
+                    DragReorderingEnabled &&
+                    !extendRange &&
+                    !toggle &&
+                    IsSelected;
+                if (!selectSingleOnRelease)
+                    SelectionRequested?.Invoke(extendRange, toggle);
             }
+            if (!Locked && DragReorderingEnabled)
+                DragCandidateRequested?.Invoke(selectSingleOnRelease);
         }
 
         protected override void OnRightMouseButtonPressed(MouseEventArgs e)
@@ -182,13 +216,23 @@ namespace Taskmaster.UI
         protected override void Paint(SpriteBatch spriteBatch, Rectangle bounds)
         {
             var pixel = ContentService.Textures.Pixel;
-            var font = GameService.Content.DefaultFont14;
-            var smallFont = GameService.Content.DefaultFont12;
+            var font = _sizing.BodyFont;
+            var smallFont = _sizing.SmallFont;
 
             if (IsSelected)
                 spriteBatch.DrawOnCtrl(this, pixel, bounds, TaskmasterTheme.RowSelected);
             if (_hover)
                 spriteBatch.DrawOnCtrl(this, pixel, bounds, TaskmasterTheme.RowHover);
+            if (IsDropTarget)
+            {
+                int markerHeight = _sizing.Px(2);
+                int markerY = DropAfter ? bounds.Height - markerHeight : 0;
+                spriteBatch.DrawOnCtrl(
+                    this,
+                    pixel,
+                    new Rectangle(_sizing.Px(4), markerY, Math.Max(0, bounds.Width - _sizing.Px(8)), markerHeight),
+                    TaskmasterTheme.Gold);
+            }
 
             bool done = _task.IsDone;
             var textColor = done ? TaskmasterTheme.DoneText
@@ -213,6 +257,8 @@ namespace Taskmaster.UI
             }
 
             int x = cb.Right + 8;
+            int itemGap = _sizing.Px(8);
+            int compactGap = _sizing.Px(6);
             var nameSize = font.MeasureString(_task.Name);
             var nameRect = new Rectangle(x, 0, (int)nameSize.Width + 2, Height);
             spriteBatch.DrawStringOnCtrl(this, _task.Name, font, nameRect, textColor,
@@ -222,18 +268,23 @@ namespace Taskmaster.UI
                 var strike = new Rectangle(x, Height / 2, (int)nameSize.Width, 1);
                 spriteBatch.DrawOnCtrl(this, pixel, strike, TaskmasterTheme.DoneText);
             }
-            x = nameRect.Right + 8;
+            x = nameRect.Right + itemGap;
 
             if (HasCounter)
             {
                 var chipText = $"{_task.CurrentCount}/{_task.TargetCount}";
                 var chipSize = smallFont.MeasureString(chipText);
-                _chipBounds = new Rectangle(x, (Height - 18) / 2, (int)chipSize.Width + 12, 18);
+                int chipHeight = _sizing.Px(18);
+                _chipBounds = new Rectangle(
+                    x,
+                    (Height - chipHeight) / 2,
+                    (int)chipSize.Width + _sizing.Px(12),
+                    chipHeight);
                 spriteBatch.DrawOnCtrl(this, pixel, _chipBounds, TaskmasterTheme.ChipFill);
                 DrawBorder(spriteBatch, _chipBounds, TaskmasterTheme.ChipBorder);
                 spriteBatch.DrawStringOnCtrl(this, chipText, smallFont, _chipBounds, TaskmasterTheme.Gold,
                     false, HorizontalAlignment.Center, VerticalAlignment.Middle);
-                x = _chipBounds.Right + 8;
+                x = _chipBounds.Right + itemGap;
             }
             else if (!_isSubtask && _task.HasSubtasks)
             {
@@ -243,7 +294,7 @@ namespace Taskmaster.UI
                 var subRect = new Rectangle(x, 0, (int)subSize.Width + 2, Height);
                 spriteBatch.DrawStringOnCtrl(this, subText, smallFont, subRect, TaskmasterTheme.DimText,
                     false, HorizontalAlignment.Left, VerticalAlignment.Middle);
-                x = subRect.Right + 8;
+                x = subRect.Right + itemGap;
                 _chipBounds = Rectangle.Empty;
             }
             else
@@ -253,11 +304,16 @@ namespace Taskmaster.UI
 
             if (HasClipboard)
             {
-                _clipboardBounds = new Rectangle(x, (Height - IconSize) / 2, IconSize, IconSize);
+                _clipboardBounds = new Rectangle(
+                    x,
+                    (Height - InlineIconHitSize) / 2,
+                    InlineIconHitSize,
+                    InlineIconHitSize);
+                var clipboardGlyphBounds = CenteredGlyph(_clipboardBounds, InlineIconSize);
                 bool flashing = DateTime.UtcNow < _copiedFlashUntilUtc;
-                spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Clipboard, _clipboardBounds,
+                spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Clipboard, clipboardGlyphBounds,
                     flashing ? TaskmasterTheme.Success : TaskmasterTheme.DimText);
-                x = _clipboardBounds.Right + 6;
+                x = _clipboardBounds.Right + compactGap;
             }
             else
             {
@@ -266,9 +322,21 @@ namespace Taskmaster.UI
 
             if (!string.IsNullOrEmpty(_task.Notes))
             {
-                _noteBounds = new Rectangle(x, (Height - IconSize) / 2, IconSize, IconSize);
-                spriteBatch.DrawOnCtrl(this, TaskmasterIcons.Note, _noteBounds, TaskmasterTheme.DimText);
-                x = _noteBounds.Right + 6;
+                _noteBounds = new Rectangle(
+                    x,
+                    (Height - InlineIconHitSize) / 2,
+                    InlineIconHitSize,
+                    InlineIconHitSize);
+                spriteBatch.DrawOnCtrl(
+                    this,
+                    TaskmasterIcons.Note,
+                    CenteredGlyph(_noteBounds, InlineIconSize),
+                    TaskmasterTheme.DimText);
+                x = _noteBounds.Right + compactGap;
+            }
+            else
+            {
+                _noteBounds = Rectangle.Empty;
             }
 
             // Reserve the chevron's slot on every top-level row (drawn only when the
@@ -276,7 +344,7 @@ namespace Taskmaster.UI
             // whether or not this particular row has one.
             int rightX = _isSubtask
                 ? Width - ScrollbarMargin
-                : Width - ScrollbarMargin - ChevronHitSize - 6;
+                : Width - ScrollbarMargin - ChevronHitSize - compactGap;
             // Subtasks share the parent's countdown (see TaskRow.CountdownAnchor), so
             // repeating identical text on every child row was just noise - removed for
             // now, parent row still shows it.
@@ -287,7 +355,7 @@ namespace Taskmaster.UI
                 spriteBatch.DrawStringOnCtrl(this, _countdownText, smallFont, cdRect,
                     _dueSoon ? TaskmasterTheme.DueSoon : TaskmasterTheme.DimText,
                     false, HorizontalAlignment.Right, VerticalAlignment.Middle);
-                rightX = cdRect.X - 8;
+                rightX = cdRect.X - itemGap;
             }
 
             // Close stays visible while this task's editor is open. Subtasks don't get
@@ -299,8 +367,8 @@ namespace Taskmaster.UI
                 // editor panel itself carries no Save/Cancel/Delete buttons of its own.
                 if (IsEditing)
                 {
-                    const int hitSize = RowHeight;
-                    const int actionGap = 2;
+                    int hitSize = RowHeight;
+                    int actionGap = _sizing.Px(2);
                     _pencilBounds = new Rectangle(rightX - hitSize, 0, hitSize, hitSize);
 
                     var closeGlyphBounds = new Rectangle(
@@ -325,7 +393,7 @@ namespace Taskmaster.UI
                 }
                 else
                 {
-                    const int hitSize = RowHeight;
+                    int hitSize = RowHeight;
                     _pencilBounds = new Rectangle(
                         rightX - hitSize,
                         (Height - hitSize) / 2,
@@ -355,5 +423,12 @@ namespace Taskmaster.UI
             spriteBatch.DrawOnCtrl(this, pixel, new Rectangle(r.X, r.Y, 1, r.Height), color);
             spriteBatch.DrawOnCtrl(this, pixel, new Rectangle(r.Right - 1, r.Y, 1, r.Height), color);
         }
+
+        private static Rectangle CenteredGlyph(Rectangle bounds, int glyphSize) =>
+            new Rectangle(
+                bounds.X + (bounds.Width - glyphSize) / 2,
+                bounds.Y + (bounds.Height - glyphSize) / 2,
+                glyphSize,
+                glyphSize);
     }
 }

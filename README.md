@@ -17,12 +17,14 @@
 - **Per-task reset schedules** - daily/weekly server reset, map bonus rotation, PSNA, WvW EU/NA, local time, custom cooldown, or never. See [Reset Schedules](#reset-schedules) below.
 - **A reset engine that never drifts** - no stored "next reset", no end dates; every check derives boundaries from UTC math, so it can't rot after hibernation, DST, or clock changes.
 - **Counters** - "0/5" tasks that need several completions before they're done.
-- **Subtasks** - one level of children with their own checkboxes; the parent completes when all of them do, and shares one countdown with the group.
-- **Click-to-copy** - attach a waypoint code or chat command to a task, copy it with one click.
+- **Subtasks** - one level of children with their own checkboxes and clipboard content; the parent completes when all of them do, and shares one countdown with the group.
+- **Click-to-copy** - attach a waypoint code or chat command to a task or subtask and copy it with one click.
 - **Notes** - hover tooltip per task.
 - **Countdowns + due-soon warning** - see time to reset per task; unchecked tasks turn amber under 1 h.
 - **Tab progress badges** - "Dailies 4/7" at a glance.
 - **Multi-select** - click a task to select it, Shift-click a range, or Ctrl-click individual tasks, then move or delete the selection together.
+- **Flexible sizing** - adjust interface and text scale independently for compact or more accessible layouts.
+- **Fast ordering** - drag tasks and subtasks into place, or use move up/down/top/bottom actions.
 - **Share tabs** - export/import a whole tab via clipboard JSON, notes and progress stripped out.
 - Hide-done toggle, lock mode (checking still works, editing doesn't), unfocused opacity, toggle keybind.
 
@@ -34,9 +36,11 @@ Click **+** to add a tab, use the arrows or mouse wheel when you have more than 
 
 ## Tasks & Subtasks
 
-Click **+ Add task** in the bottom-right, then use the pencil to edit its name, reset schedule, count target, clipboard payload, notes, and subtasks. New tasks scroll into view automatically. Left-click a checkbox to check or uncheck it; right-click a task for edit, duplicate, reorder, move, and delete actions.
+Click **+ Add task** in the bottom-right, then use the pencil to edit its name, reset schedule, count target, clipboard payload, notes, and subtasks. Each subtask can also carry its own waypoint or chat command. New tasks scroll into view automatically. Left-click a checkbox to check or uncheck it; right-click a task or subtask for ordering and deletion actions.
 
-A task with subtasks shows a chevron to expand it; the parent completes exactly when every subtask does, and they all count down together instead of each subtask running its own clock.
+A task with subtasks shows a chevron to expand it. Expanded subtasks have dedicated copy buttons when clipboard content is configured. The parent completes exactly when every subtask does, and they all count down together instead of each subtask running its own clock.
+
+Drag-and-drop ordering is enabled by default and can be disabled in the module settings. Context menus also provide move up, move down, move to top, and move to bottom actions.
 
 ![Tasks and subtasks](https://maestro-assets.pages.dev/taskmaster-subtasks.gif?v=20260721-v2)
 
@@ -68,12 +72,16 @@ Right-click a tab to **Export** its tasks (including subtasks and schedules, but
 
 ![Tab export and import](https://maestro-assets.pages.dev/taskmaster-share.gif?v=20260721-v2)
 
+## Module Settings
+
+Adjust interface and text scale independently for a compact layout or larger, more accessible controls. You can also configure unfocused opacity, the show/hide keybind, map visibility, and whether task and subtask drag-and-drop ordering is enabled.
+
+![Taskmaster module settings](https://maestro-assets.pages.dev/taskmaster-settings.png?v=20260722-v21)
+
 ## Reliability
 
 If resets ever look wrong, open the module settings: it shows the exact UTC times
 the engine computes for every boundary, plus what the module thinks "now" is.
-
-![Module settings - reset engine status](https://maestro-assets.pages.dev/taskmaster-settings.png)
 
 Task data lives in `tasks.json` (with automatic `.bak`); a corrupt file is
 quarantined, never silently discarded.

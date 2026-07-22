@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.1.0
+
+Taskmaster is easier to read, click, and organize across different display
+sizes.
+
+### Added
+
+- Interface and text scaling controls in the module settings
+- Drag-and-drop ordering for tasks and subtasks, enabled by default
+- Clipboard and waypoint content for individual subtasks
+- Dedicated copy buttons on expanded subtasks
+- **Move to top** and **Move to bottom** actions for tasks and subtasks
+
+### Improved
+
+- Larger row controls and interaction targets, including clipboard buttons
+- Subtask names and clipboard content can be edited together
+- Reordering preserves the current selection and scroll position
+- Move actions skip hidden completed items so each action has a visible result
+
 ## v2.0.0
 
 Taskmaster has a refreshed look and smoother controls throughout the module.
