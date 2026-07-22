@@ -11,6 +11,8 @@ namespace Taskmaster.Models
         public string Name { get; set; } = "";
         public int Order { get; set; }
         public ResetScheduleType Schedule { get; set; } = ResetScheduleType.DailyServer;
+        public TaskPresetType PresetType { get; set; }
+        public TaskPresetSlot PresetSlot { get; set; }
 
         /// <summary>LocalTime schedule only: local wall-clock time of day the task resets.</summary>
         public TimeSpan? LocalResetTime { get; set; }
@@ -35,6 +37,17 @@ namespace Taskmaster.Models
 
         [JsonIgnore]
         public bool HasSubtasks => Subtasks != null && Subtasks.Count > 0;
+
+        [JsonIgnore]
+        public bool IsManagedPreset => PresetType != TaskPresetType.None;
+
+        [JsonIgnore]
+        public bool IsManagedPresetParent =>
+            IsManagedPreset && PresetSlot == TaskPresetSlot.None;
+
+        [JsonIgnore]
+        public bool IsManagedPresetChild =>
+            IsManagedPreset && PresetSlot != TaskPresetSlot.None;
 
         [JsonIgnore]
         public bool IsDone => HasSubtasks

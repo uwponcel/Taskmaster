@@ -42,6 +42,9 @@ or require external accounts for normal use.
    readable, and usable on small displays.
 5. Keep behavior predictable: standard clicks, context menus, modifiers, and
    drag interactions should follow familiar desktop conventions.
+6. Keep curated content opt-in: built-in presets should materialize as normal
+   local checklist groups inside user-chosen tabs, not as separate tracker
+   screens or network-dependent services.
 
 ## Accessibility & Inclusion
 

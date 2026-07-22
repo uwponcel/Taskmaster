@@ -30,8 +30,10 @@ namespace Taskmaster.UI
         private readonly TaskListPanel _listPanel;
         private readonly IconButton _hideDoneBtn;
         private readonly IconButton _lockBtn;
+        private readonly IconButton _checkAllBtn;
         private readonly Panel _actionBar;
         private readonly Panel _actionBarSeparator;
+        private readonly IconButton _addPresetBtn;
         private readonly StandardButton _addTaskBtn;
         private readonly Label _emptyLabel;
         private TextBox _renameBox;
@@ -90,11 +92,23 @@ namespace Taskmaster.UI
                 Selected = _locked,
                 BasicTooltipText = "Lock tasks (checking still works)"
             };
+            _checkAllBtn = new IconButton(TaskmasterIcons.Check, TaskmasterTheme.IconGlyph)
+            {
+                Parent = _actionBar,
+                BasicTooltipText = "Check all tasks in this tab"
+            };
 
             _addTaskBtn = new StandardButton
             {
                 Parent = _actionBar,
                 Text = "+  Add task"
+            };
+            _addPresetBtn = new IconButton(
+                TaskmasterIcons.ChevronDown,
+                TaskmasterTheme.IconGlyph)
+            {
+                Parent = _actionBar,
+                BasicTooltipText = "Add preset"
             };
             UpdateAddTaskButtonState();
 
@@ -172,9 +186,15 @@ namespace Taskmaster.UI
             _lockBtn.Location = new Point(
                 _hideDoneBtn.Right + _sizing.Px(ActionControlGap),
                 controlY);
+            _checkAllBtn.Location = new Point(
+                _lockBtn.Right + _sizing.Px(ActionControlGap),
+                controlY);
             _addTaskBtn.Location = new Point(
                 Math.Max(padding, _actionBar.Width - _addTaskBtn.Width - padding),
                 (_actionBar.Height - _addTaskBtn.Height) / 2);
+            _addPresetBtn.Location = new Point(
+                Math.Max(padding, _addTaskBtn.Left - _sizing.Px(ActionControlGap) - _addPresetBtn.Width),
+                (_actionBar.Height - _addPresetBtn.Height) / 2);
         }
 
         private void RelayoutTabRenameBox()
@@ -245,6 +265,8 @@ namespace Taskmaster.UI
             };
 
             _addTaskBtn.Click += (s, e) => AddTaskToActiveTab();
+            _addPresetBtn.Click += (s, e) => ShowPresetMenu();
+            _checkAllBtn.Click += (s, e) => ToggleAllTasksInActiveTab();
 
             _tabStrip.TabClicked += tab => { _activeTabId = tab.Id; RefreshAll(); };
             _tabStrip.AddClicked += AddTab;
@@ -260,7 +282,8 @@ namespace Taskmaster.UI
             _listPanel.DataChanged += MarkDirtyAndRefresh;
             _listPanel.TaskContextMenuRequested += ShowTaskMenu;
             _listPanel.CopyToClipboardRequested += task =>
-                ClipboardUtil.WindowsClipboardService.SetTextAsync(task.ClipboardContent);
+                ClipboardUtil.WindowsClipboardService.SetTextAsync(
+                    TaskPresetService.ResolveClipboardContent(task, DateTime.UtcNow));
         }
 
         /// <summary>A fully-completed tab (all tasks done, at least one task) is hidden
@@ -351,11 +374,47 @@ namespace Taskmaster.UI
 
         private void UpdateAddTaskButtonState()
         {
-            bool hasActiveTab = ActiveTab != null;
+            var activeTab = ActiveTab;
+            bool hasActiveTab = activeTab != null;
+            bool hasTasks = activeTab?.Tasks.Count > 0;
+            bool allTasksComplete =
+                hasTasks && activeTab.Tasks.All(task => task.IsDone);
             _addTaskBtn.Enabled = !_locked && hasActiveTab;
+            _addPresetBtn.Enabled = !_locked && hasActiveTab;
+            _checkAllBtn.Enabled = hasTasks;
+            _checkAllBtn.Selected = allTasksComplete;
             _addTaskBtn.BasicTooltipText = _locked
                 ? "Locked - unlock to add tasks"
                 : hasActiveTab ? null : "Add a tab first";
+            _addPresetBtn.BasicTooltipText = _locked
+                ? "Locked - unlock to add presets"
+                : hasActiveTab ? "Add preset" : "Add a tab first";
+            _checkAllBtn.BasicTooltipText = !hasActiveTab
+                ? "Add a tab first"
+                : !hasTasks
+                    ? "Add a task first"
+                    : allTasksComplete
+                        ? "Uncheck all tasks in this tab"
+                        : "Check all tasks in this tab";
+        }
+
+        private void ToggleAllTasksInActiveTab()
+        {
+            var tab = ActiveTab;
+            if (tab == null || tab.Tasks.Count == 0) return;
+
+            var nowUtc = DateTime.UtcNow;
+            bool allTasksComplete = tab.Tasks.All(task => task.IsDone);
+            foreach (var task in tab.Tasks)
+            {
+                if (allTasksComplete)
+                    task.UncheckAll();
+                else if (!task.IsDone)
+                    task.CompleteAll(nowUtc);
+                task.SyncGroupAnchor(nowUtc);
+            }
+
+            MarkDirtyAndRefresh();
         }
 
         private void AddTaskToActiveTab()
@@ -372,6 +431,39 @@ namespace Taskmaster.UI
             tab.Tasks.Add(t);
             _listPanel.AddNewTask(t);
             MarkDirtyAndRefresh();
+        }
+
+        private void ShowPresetMenu()
+        {
+            var tab = ActiveTab;
+            if (_locked || tab == null) return;
+
+            var menu = new ContextMenuStrip();
+            bool alreadyAdded = TaskPresetService.ContainsPreset(
+                tab,
+                TaskPresetType.PactSupplyNetworkAgents);
+            var psna = menu.AddMenuItem(alreadyAdded
+                ? "Pact Supply Network Agents (already added)"
+                : "Pact Supply Network Agents");
+            psna.Enabled = !alreadyAdded;
+            psna.Click += (s, e) => AddPsnaPreset(tab);
+            menu.Show(GameService.Input.Mouse.Position);
+        }
+
+        private void AddPsnaPreset(TodoTab tab)
+        {
+            if (_locked ||
+                tab == null ||
+                TaskPresetService.ContainsPreset(
+                    tab,
+                    TaskPresetType.PactSupplyNetworkAgents))
+                return;
+
+            var preset = TaskPresetService.CreatePsna(tab.Tasks.Count);
+            tab.Tasks.Add(preset);
+            _activeTabId = tab.Id;
+            MarkDirtyAndRefresh();
+            _listPanel.ExpandTask(preset);
         }
 
         private void BeginRenameTab(TodoTab tab, bool isNew = false)
@@ -430,6 +522,8 @@ namespace Taskmaster.UI
             _hideDoneBtn.GlyphSize = glyphSize;
             _lockBtn.Size = new Point(iconButtonWidth, compactButtonHeight);
             _lockBtn.GlyphSize = glyphSize;
+            _checkAllBtn.Size = new Point(iconButtonWidth, compactButtonHeight);
+            _checkAllBtn.GlyphSize = glyphSize;
 
             _addTaskBtn.Height = compactButtonHeight;
             int addTaskTextWidth = (int)Math.Max(
@@ -437,6 +531,8 @@ namespace Taskmaster.UI
                 _sizing.BodyFont.MeasureString(_addTaskBtn.Text).Width);
             _addTaskBtn.Width =
                 addTaskTextWidth + _sizing.Px(24);
+            _addPresetBtn.Size = new Point(_sizing.Px(28), compactButtonHeight);
+            _addPresetBtn.GlyphSize = _sizing.Px(14);
 
             _tabStrip.Sizing = _sizing;
             _listPanel.Sizing = _sizing;
@@ -508,6 +604,11 @@ namespace Taskmaster.UI
                         break;
                     case TabShareImportOutcome.VersionTooNew:
                         ScreenNotification.ShowNotification("Tab export is from a newer Taskmaster version",
+                            ScreenNotification.NotificationType.Error);
+                        break;
+                    case TabShareImportOutcome.InvalidPresetData:
+                        ScreenNotification.ShowNotification(
+                            "Tab export contains invalid or duplicate preset data",
                             ScreenNotification.NotificationType.Error);
                         break;
                     default:
@@ -620,20 +721,23 @@ namespace Taskmaster.UI
                 .OrderBy(candidate => candidate.Order)
                 .ToList();
             int taskIndex = visibleTasks.IndexOf(task);
-            var edit = menu.AddMenuItem("Edit");
-            edit.Click += (s, e) => _listPanel.BeginEdit(task);
-
-            var duplicate = menu.AddMenuItem("Duplicate");
-            duplicate.Click += (s, e) =>
+            if (!task.IsManagedPresetParent)
             {
-                var json = TabShare.Export(new TodoTab { Name = "x", Tasks = { task } });
-                var copy = TabShare.TryImport(json).Tab.Tasks[0];
-                copy.Name = task.Name + " (copy)";
-                copy.Order = task.Order + 1;
-                tab.Tasks.Insert(Math.Min(tab.Tasks.IndexOf(task) + 1, tab.Tasks.Count), copy);
-                _listPanel.ClearSelection();
-                MarkDirtyAndRefresh();
-            };
+                var edit = menu.AddMenuItem("Edit");
+                edit.Click += (s, e) => _listPanel.BeginEdit(task);
+
+                var duplicate = menu.AddMenuItem("Duplicate");
+                duplicate.Click += (s, e) =>
+                {
+                    var json = TabShare.Export(new TodoTab { Name = "x", Tasks = { task } });
+                    var copy = TabShare.TryImport(json).Tab.Tasks[0];
+                    copy.Name = task.Name + " (copy)";
+                    copy.Order = task.Order + 1;
+                    tab.Tasks.Insert(Math.Min(tab.Tasks.IndexOf(task) + 1, tab.Tasks.Count), copy);
+                    _listPanel.ClearSelection();
+                    MarkDirtyAndRefresh();
+                };
+            }
 
             if (taskIndex > 0)
             {
@@ -650,12 +754,17 @@ namespace Taskmaster.UI
                 moveToBottom.Click += (s, e) => MoveTaskToEdge(tab, task, toStart: false);
             }
 
-            var otherTabs = _store.Tabs.Where(t => t.Id != tab.Id).OrderBy(t => t.Order).ToList();
+            var tasksToMove = selectedTasks.Count > 1
+                ? selectedTasks
+                : new List<TodoTask> { task };
+            var otherTabs = _store.Tabs
+                .Where(candidate =>
+                    candidate.Id != tab.Id &&
+                    TaskPresetService.CanMoveTo(tasksToMove, candidate))
+                .OrderBy(candidate => candidate.Order)
+                .ToList();
             if (otherTabs.Count > 0)
             {
-                var tasksToMove = selectedTasks.Count > 1
-                    ? selectedTasks
-                    : new List<TodoTask> { task };
                 var moveToLabel = tasksToMove.Count > 1
                     ? $"Move selected ({tasksToMove.Count}) to"
                     : "Move to";
@@ -670,7 +779,8 @@ namespace Taskmaster.UI
                 moveTo.Submenu = moveMenu;
             }
 
-            var delete = menu.AddMenuItem("Delete");
+            var delete = menu.AddMenuItem(
+                task.IsManagedPresetParent ? "Remove preset" : "Delete");
             delete.Click += (s, e) =>
             {
                 tab.Tasks.Remove(task);

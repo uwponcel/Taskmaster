@@ -98,8 +98,16 @@ namespace Taskmaster.UI
                 Width = _sizing.Px(220),
                 Height = _sizing.Px(27)
             };
-            foreach (var name in ScheduleNames.Values) _scheduleDropdown.Items.Add(name);
-            _scheduleDropdown.SelectedItem = ScheduleNames[draft?.Schedule ?? task.Schedule];
+            var selectedSchedule = draft?.Schedule ?? task.Schedule;
+            foreach (var schedule in ScheduleNames)
+            {
+                // PSNA is now created through the managed preset. Keep the legacy
+                // option only when an existing task already uses it.
+                if (schedule.Key != ResetScheduleType.Psna ||
+                    selectedSchedule == ResetScheduleType.Psna)
+                    _scheduleDropdown.Items.Add(schedule.Value);
+            }
+            _scheduleDropdown.SelectedItem = ScheduleNames[selectedSchedule];
             y += RowH;
             _dynamicRowsStartY = y;
 

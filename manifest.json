@@ -1,10 +1,10 @@
 {
   "name": "Taskmaster",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "namespace": "Aex.Taskmaster",
   "package": "Taskmaster.dll",
   "manifest_version": 1,
-  "description": "Tabbed to-do lists for GW2 recurring content. Freeform tabs, counters, subtasks, notes, click-to-copy, reset countdowns, due-soon warnings, and shareable tab exports - with a reset engine that never drifts.",
+  "description": "Tabbed to-do lists for GW2 recurring content. Freeform tabs, counters, subtasks, presets, click-to-copy, reset countdowns, due-soon warnings, and shareable tab exports - with a reset engine that never drifts.",
   "dependencies": {
     "bh.blishhud": ">=1.2.0"
   },

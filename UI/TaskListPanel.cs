@@ -99,7 +99,8 @@ namespace Taskmaster.UI
                 _dragReorderingEnabled = value;
                 if (!value) CancelDrag();
                 foreach (var row in _rows)
-                    row.DragReorderingEnabled = value;
+                    row.DragReorderingEnabled =
+                        value && row.ParentTask?.IsManagedPresetParent != true;
             }
         }
 
@@ -159,6 +160,7 @@ namespace Taskmaster.UI
 
         public void BeginEdit(TodoTask task)
         {
+            if (task == null || task.IsManagedPreset) return;
             PreserveScrollDistance();
             _editingTaskId = task.Id;
             _newTaskId = null;
@@ -179,6 +181,17 @@ namespace Taskmaster.UI
             _pendingScrollTaskId = task.Id;
             _scrollApplyFrames = 5;
             Rebuild();
+        }
+
+        public void ExpandTask(TodoTask task)
+        {
+            if (task == null || !task.HasSubtasks) return;
+            _expanded.Add(task.Id);
+            _pendingScrollTaskId = task.Id;
+            _scrollApplyFrames = 5;
+            Rebuild();
+            _selection.Select(task.Id, _selectableTaskIds, extendRange: false, toggle: false);
+            ApplySelectionToRows();
         }
 
         public void RefreshCountdowns(DateTime nowUtc)
@@ -255,7 +268,11 @@ namespace Taskmaster.UI
                 Width = ContentRegion.Width,
                 IsExpanded = _expanded.Contains(task.Id),
                 Locked = _locked,
-                DragReorderingEnabled = _dragReorderingEnabled,
+                CanEdit = !task.IsManagedPreset,
+                CanOpenContextMenu = !(isSubtask && parent?.IsManagedPresetParent == true),
+                DragReorderingEnabled =
+                    _dragReorderingEnabled &&
+                    !(isSubtask && parent?.IsManagedPresetParent == true),
                 ParentTask = parent,
                 IsSelected = !isSubtask && _selection.IsSelected(task.Id),
                 IsEditing = task.Id == _editingTaskId,
@@ -321,6 +338,7 @@ namespace Taskmaster.UI
 
         private void AddEditPanel(TodoTask task, bool isNew = false)
         {
+            if (task.IsManagedPreset) return;
             var edit = new TaskEditPanel(task, isNew, _sizing, _editingDraft)
             {
                 Parent = this,

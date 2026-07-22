@@ -44,9 +44,14 @@
     <ItemGroup>
         <Compile Include="Module.cs"/>
         <Compile Include="Models\ResetScheduleType.cs"/>
+        <Compile Include="Models\TaskPresetType.cs"/>
+        <Compile Include="Models\TaskPresetSlot.cs"/>
         <Compile Include="Models\TodoTask.cs"/>
         <Compile Include="Models\TodoTab.cs"/>
         <Compile Include="Services\ResetEngine.cs"/>
+        <Compile Include="Services\MapWindowVisibilityController.cs"/>
+        <Compile Include="Services\PsnaRotation.cs"/>
+        <Compile Include="Services\TaskPresetService.cs"/>
         <Compile Include="Services\TaskStore.cs"/>
         <Compile Include="Services\TabShare.cs"/>
         <Compile Include="Services\TaskOrdering.cs"/>

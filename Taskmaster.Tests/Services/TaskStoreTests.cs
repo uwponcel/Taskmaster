@@ -120,6 +120,60 @@ namespace Taskmaster.Tests.Services
         }
 
         [Fact]
+        public void Load_NewerVersionWithUnknownPreset_RemainsReadOnlyInsteadOfQuarantined()
+        {
+            File.WriteAllText(
+                TasksPath,
+                "{\"Version\":999,\"Tabs\":[{\"Name\":\"Future\",\"Tasks\":[{\"PresetType\":999}]}]}");
+
+            var store = new TaskStore(_dir);
+            var result = store.Load();
+
+            Assert.Equal(TaskStoreLoadOutcome.VersionTooNew, result.Outcome);
+            Assert.True(store.ReadOnly);
+            Assert.True(File.Exists(TasksPath));
+            Assert.Empty(Directory.GetFiles(_dir, "tasks.corrupt-*.json"));
+        }
+
+        [Fact]
+        public void Load_V1DataStillLoads()
+        {
+            File.WriteAllText(
+                TasksPath,
+                "{\"Version\":1,\"Tabs\":[{\"Name\":\"Legacy\",\"Tasks\":[]}]}");
+
+            var store = new TaskStore(_dir);
+            var result = store.Load();
+
+            Assert.Equal(TaskStoreLoadOutcome.LoadedPrimary, result.Outcome);
+            Assert.Equal("Legacy", store.Tabs[0].Name);
+            Assert.False(store.ReadOnly);
+        }
+
+        [Fact]
+        public void Load_InvalidManagedPresetIsQuarantined()
+        {
+            var store = new TaskStore(_dir);
+            store.Load();
+            var tab = new TodoTab { Name = "Dailies" };
+            tab.Tasks.Add(TaskPresetService.CreatePsna(0));
+            store.Tabs.Add(tab);
+            store.Save();
+
+            var json = File.ReadAllText(TasksPath);
+            File.WriteAllText(
+                TasksPath,
+                json.Replace("\"Schedule\": 6", "\"Schedule\": 0"));
+
+            var reloaded = new TaskStore(_dir);
+            var result = reloaded.Load();
+
+            Assert.Equal(TaskStoreLoadOutcome.StartedEmptyAfterCorruption, result.Outcome);
+            Assert.NotNull(result.QuarantinedPath);
+            Assert.True(File.Exists(result.QuarantinedPath));
+        }
+
+        [Fact]
         public void FlushIfDue_DebouncesTwoSeconds()
         {
             var store = new TaskStore(_dir);

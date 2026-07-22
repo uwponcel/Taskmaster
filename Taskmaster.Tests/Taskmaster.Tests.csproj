@@ -62,7 +62,10 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="SmokeTest.cs" />
     <Compile Include="Models\TodoTaskTests.cs" />
+    <Compile Include="Services\MapWindowVisibilityControllerTests.cs" />
     <Compile Include="Services\ResetEngineTests.cs" />
+    <Compile Include="Services\PsnaRotationTests.cs" />
+    <Compile Include="Services\TaskPresetServiceTests.cs" />
     <Compile Include="Services\TaskStoreTests.cs" />
     <Compile Include="Services\TabShareTests.cs" />
     <Compile Include="Services\TaskOrderingTests.cs" />

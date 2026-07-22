@@ -19,6 +19,8 @@ namespace Taskmaster.UI
         private readonly bool _isSubtask;
         private readonly TaskmasterSizing _sizing;
         private string _countdownText = "";
+        private string _displayName = "";
+        private bool _hasClipboard;
         private bool _dueSoon;
         private bool _hover;
         private bool _isSelected;
@@ -35,6 +37,8 @@ namespace Taskmaster.UI
         public TodoTask ParentTask { get; set; }
         public bool IsExpanded { get; set; }
         public bool Locked { get; set; }
+        public bool CanEdit { get; set; } = true;
+        public bool CanOpenContextMenu { get; set; } = true;
         public bool DragReorderingEnabled { get; set; }
         public bool DropAfter { get; set; }
         public bool IsDropTarget
@@ -125,13 +129,16 @@ namespace Taskmaster.UI
         private Rectangle CheckboxBounds =>
             new Rectangle(LeftOffset, (Height - CheckboxSize) / 2, CheckboxSize, CheckboxSize);
 
-        private bool HasClipboard => !string.IsNullOrEmpty(_task.ClipboardContent);
+        private bool HasClipboard => _hasClipboard;
         private bool HasCounter => _task.TargetCount > 1 && !_task.HasSubtasks;
         private bool InChipZone(Point p) => HasCounter && _chipBounds.Contains(p);
 
         /// <summary>Called by the list panel once per minute (and after any mutation).</summary>
         public void RefreshDisplay(DateTime nowUtc)
         {
+            _displayName = TaskPresetService.ResolveName(_task, nowUtc);
+            _hasClipboard = !string.IsNullOrEmpty(
+                TaskPresetService.ResolveClipboardContent(_task, nowUtc));
             var anchor = CountdownAnchor ?? _task;
             var next = ResetEngine.NextBoundary(anchor, nowUtc);
             _countdownText = next.HasValue ? FormatCountdown(next.Value - nowUtc) : "";
@@ -184,8 +191,8 @@ namespace Taskmaster.UI
 
             if (!_isSubtask && _task.HasSubtasks && ChevronBounds.Contains(p)) { ExpandToggled?.Invoke(); return; }
             if (CheckboxBounds.Contains(p) || InChipZone(p)) { ToggleRequested?.Invoke(); return; }
-            if (!Locked && _saveBounds != Rectangle.Empty && _saveBounds.Contains(p)) { SaveRequested?.Invoke(); return; }
-            if (!Locked && _pencilBounds != Rectangle.Empty && _pencilBounds.Contains(p)) { EditRequested?.Invoke(); return; }
+            if (!Locked && CanEdit && _saveBounds != Rectangle.Empty && _saveBounds.Contains(p)) { SaveRequested?.Invoke(); return; }
+            if (!Locked && CanEdit && _pencilBounds != Rectangle.Empty && _pencilBounds.Contains(p)) { EditRequested?.Invoke(); return; }
             if (HasClipboard && _clipboardBounds.Contains(p)) { CopyRequested?.Invoke(); return; }
             bool selectSingleOnRelease = false;
             if (!Locked && !_isSubtask)
@@ -210,7 +217,7 @@ namespace Taskmaster.UI
             base.OnRightMouseButtonPressed(e);
             // Right-click is context-menu only everywhere on the row - checking and
             // unchecking is left-click exclusively (ToggleRequested handles both directions).
-            if (!Locked) ContextMenuRequested?.Invoke();
+            if (!Locked && CanOpenContextMenu) ContextMenuRequested?.Invoke();
         }
 
         protected override void Paint(SpriteBatch spriteBatch, Rectangle bounds)
@@ -259,9 +266,9 @@ namespace Taskmaster.UI
             int x = cb.Right + 8;
             int itemGap = _sizing.Px(8);
             int compactGap = _sizing.Px(6);
-            var nameSize = font.MeasureString(_task.Name);
+            var nameSize = font.MeasureString(_displayName);
             var nameRect = new Rectangle(x, 0, (int)nameSize.Width + 2, Height);
-            spriteBatch.DrawStringOnCtrl(this, _task.Name, font, nameRect, textColor,
+            spriteBatch.DrawStringOnCtrl(this, _displayName, font, nameRect, textColor,
                 false, HorizontalAlignment.Left, VerticalAlignment.Middle);
             if (done)
             {
@@ -360,7 +367,7 @@ namespace Taskmaster.UI
 
             // Close stays visible while this task's editor is open. Subtasks don't get
             // edit actions because they have no inline editor of their own.
-            if (!_isSubtask && (_hover || IsEditing) && !Locked)
+            if (!_isSubtask && CanEdit && (_hover || IsEditing) && !Locked)
             {
                 // Checkmark (save) sits just left of the close button, editing only -
                 // this is the only way to commit the open editor's fields now that the

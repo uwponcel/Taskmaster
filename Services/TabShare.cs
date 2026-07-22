@@ -5,7 +5,13 @@ using Taskmaster.Models;
 
 namespace Taskmaster.Services
 {
-    public enum TabShareImportOutcome { Success, NotATabExport, VersionTooNew }
+    public enum TabShareImportOutcome
+    {
+        Success,
+        NotATabExport,
+        VersionTooNew,
+        InvalidPresetData
+    }
 
     public class TabShareImportResult
     {
@@ -19,7 +25,7 @@ namespace Taskmaster.Services
     /// </summary>
     public static class TabShare
     {
-        public const int PayloadVersion = 1;
+        public const int PayloadVersion = 2;
 
         private class Payload
         {
@@ -53,7 +59,17 @@ namespace Taskmaster.Services
 
             var tab = new TodoTab { Id = Guid.NewGuid(), Name = payload.Tab ?? "Imported" };
             tab.Tasks.AddRange(payload.Tasks);
+            if (!TaskPresetService.ValidateTab(tab))
+                return new TabShareImportResult
+                {
+                    Outcome = TabShareImportOutcome.InvalidPresetData
+                };
             foreach (var t in tab.Tasks) Sanitize(t);
+            if (!TaskPresetService.ValidateTab(tab))
+                return new TabShareImportResult
+                {
+                    Outcome = TabShareImportOutcome.InvalidPresetData
+                };
             return new TabShareImportResult { Outcome = TabShareImportOutcome.Success, Tab = tab };
         }
 

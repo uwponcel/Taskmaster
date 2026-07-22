@@ -16,7 +16,7 @@ namespace Taskmaster.Services
     public static class ResetEngine
     {
         private static readonly TimeSpan DailyAt = TimeSpan.Zero;
-        private static readonly TimeSpan PsnaAt = new TimeSpan(8, 0, 0);
+        public static readonly TimeSpan PsnaResetAtUtc = new TimeSpan(8, 0, 0);
         private static readonly TimeSpan WeeklyAt = new TimeSpan(7, 30, 0);
         private static readonly TimeSpan MapBonusAt = new TimeSpan(20, 0, 0);
         private static readonly TimeSpan WvwEuAt = new TimeSpan(18, 0, 0);
@@ -28,7 +28,7 @@ namespace Taskmaster.Services
             switch (task.Schedule)
             {
                 case ResetScheduleType.DailyServer:  return LastDaily(nowUtc, DailyAt);
-                case ResetScheduleType.Psna:         return LastDaily(nowUtc, PsnaAt);
+                case ResetScheduleType.Psna:         return LastDaily(nowUtc, PsnaResetAtUtc);
                 case ResetScheduleType.WeeklyServer: return LastWeekly(nowUtc, DayOfWeek.Monday, WeeklyAt);
                 case ResetScheduleType.MapBonus:     return LastWeekly(nowUtc, DayOfWeek.Thursday, MapBonusAt);
                 case ResetScheduleType.WvwEu:        return LastWeekly(nowUtc, DayOfWeek.Friday, WvwEuAt);
@@ -58,7 +58,7 @@ namespace Taskmaster.Services
             switch (task.Schedule)
             {
                 case ResetScheduleType.DailyServer:  return LastDaily(nowUtc, DailyAt).AddDays(1);
-                case ResetScheduleType.Psna:         return LastDaily(nowUtc, PsnaAt).AddDays(1);
+                case ResetScheduleType.Psna:         return LastDaily(nowUtc, PsnaResetAtUtc).AddDays(1);
                 case ResetScheduleType.WeeklyServer: return LastWeekly(nowUtc, DayOfWeek.Monday, WeeklyAt).AddDays(7);
                 case ResetScheduleType.MapBonus:     return LastWeekly(nowUtc, DayOfWeek.Thursday, MapBonusAt).AddDays(7);
                 case ResetScheduleType.WvwEu:        return LastWeekly(nowUtc, DayOfWeek.Friday, WvwEuAt).AddDays(7);

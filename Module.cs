@@ -28,6 +28,8 @@ namespace Taskmaster
         private TaskStore _store;
         private TaskmasterWindow _window;
         private CornerIcon _cornerIcon;
+        private readonly MapWindowVisibilityController _windowVisibility =
+            new MapWindowVisibilityController();
         private double _minuteAccumulator;
 
         [ImportingConstructor]
@@ -98,7 +100,9 @@ namespace Taskmaster
         private void ToggleWindow()
         {
             if (_window == null) return;
-            if (_window.Visible) _window.Hide(); else _window.Show();
+            ApplyWindowVisibility(_windowVisibility.Toggle(
+                _window.Visible,
+                IsWindowHiddenByMap()));
         }
 
         public override Blish_HUD.Graphics.UI.IView GetSettingsView()
@@ -119,10 +123,31 @@ namespace Taskmaster
                 _window?.OnMinuteTick(DateTime.UtcNow);
             }
 
-            if (_window != null && _window.Visible && !_settings.ShowOnMap.Value
-                && GameService.Gw2Mumble.IsAvailable && GameService.Gw2Mumble.UI.IsMapOpen)
+            if (_window != null)
             {
-                _window.Hide();
+                ApplyWindowVisibility(_windowVisibility.Update(
+                    _window.Visible,
+                    IsWindowHiddenByMap()));
+            }
+        }
+
+        private bool IsWindowHiddenByMap()
+        {
+            return !_settings.ShowOnMap.Value
+                   && GameService.Gw2Mumble.IsAvailable
+                   && GameService.Gw2Mumble.UI.IsMapOpen;
+        }
+
+        private void ApplyWindowVisibility(WindowVisibilityAction action)
+        {
+            switch (action)
+            {
+                case WindowVisibilityAction.Show:
+                    _window.Show();
+                    break;
+                case WindowVisibilityAction.Hide:
+                    _window.Hide();
+                    break;
             }
         }
 

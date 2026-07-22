@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.2.0
+
+### Added
+
+- Built-in Pact Supply Network Agent preset with six daily locations
+- Individual waypoint copy buttons and a parent action that copies all six links
+- Fully offline PSNA rotation derived from the official seven-day schedule
+- Check-all toggle for completing or clearing every task in the active tab
+
+### Improved
+
+- Taskmaster now returns after closing the world map when it was previously open
+
 ## v2.1.0
 
 Taskmaster is easier to read, click, and organize across different display

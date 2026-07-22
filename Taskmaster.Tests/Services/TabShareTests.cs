@@ -79,5 +79,72 @@ namespace Taskmaster.Tests.Services
             var json = "{\"Taskmaster\": 999, \"Tab\": \"x\", \"Tasks\": []}";
             Assert.Equal(TabShareImportOutcome.VersionTooNew, TabShare.TryImport(json).Outcome);
         }
+
+        [Fact]
+        public void TryImport_V1PayloadStillWorks()
+        {
+            var json = "{\"Taskmaster\":1,\"Tab\":\"Legacy\",\"Tasks\":[]}";
+            var result = TabShare.TryImport(json);
+            Assert.Equal(TabShareImportOutcome.Success, result.Outcome);
+            Assert.Equal("Legacy", result.Tab.Name);
+        }
+
+        [Fact]
+        public void ExportImport_PresetPreservesMetadataAndClearsProgress()
+        {
+            var tab = new TodoTab { Name = "Dailies" };
+            var preset = TaskPresetService.CreatePsna(0);
+            preset.Subtasks[0].Increment(DateTime.UtcNow);
+            tab.Tasks.Add(preset);
+
+            var imported = TabShare.TryImport(TabShare.Export(tab));
+
+            Assert.Equal(TabShareImportOutcome.Success, imported.Outcome);
+            var importedPreset = imported.Tab.Tasks[0];
+            Assert.True(importedPreset.IsManagedPresetParent);
+            Assert.All(importedPreset.Subtasks, child => Assert.False(child.IsDone));
+            Assert.True(TaskPresetService.ValidateTab(imported.Tab));
+        }
+
+        [Fact]
+        public void TryImport_DuplicatePresetDataIsRejected()
+        {
+            var tab = new TodoTab { Name = "Invalid" };
+            tab.Tasks.Add(TaskPresetService.CreatePsna(0));
+            tab.Tasks.Add(TaskPresetService.CreatePsna(1));
+
+            var result = TabShare.TryImport(TabShare.Export(tab));
+
+            Assert.Equal(TabShareImportOutcome.InvalidPresetData, result.Outcome);
+            Assert.Null(result.Tab);
+        }
+
+        [Fact]
+        public void TryImport_NullPresetChildIsRejectedWithoutThrowing()
+        {
+            var tab = new TodoTab { Name = "Invalid" };
+            var preset = TaskPresetService.CreatePsna(0);
+            preset.Subtasks[0] = null;
+            tab.Tasks.Add(preset);
+
+            var result = TabShare.TryImport(TabShare.Export(tab));
+
+            Assert.Equal(TabShareImportOutcome.InvalidPresetData, result.Outcome);
+        }
+
+        [Fact]
+        public void TryImport_NestedPresetIsRejected()
+        {
+            var tab = new TodoTab { Name = "Invalid" };
+            var normal = new TodoTask { Name = "Normal" };
+            var nested = new TodoTask { Name = "Nested" };
+            nested.Subtasks.Add(TaskPresetService.CreatePsna(0));
+            normal.Subtasks.Add(nested);
+            tab.Tasks.Add(normal);
+
+            var result = TabShare.TryImport(TabShare.Export(tab));
+
+            Assert.Equal(TabShareImportOutcome.InvalidPresetData, result.Outcome);
+        }
     }
 }

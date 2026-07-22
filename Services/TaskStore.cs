@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Blish_HUD;
 using Newtonsoft.Json;
 using Taskmaster.Models;
@@ -31,7 +32,7 @@ namespace Taskmaster.Services
     {
         private static readonly Logger Logger = Logger.GetLogger<TaskStore>();
 
-        public const int CurrentVersion = 1;
+        public const int CurrentVersion = 2;
         private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(2);
 
         private readonly string _filePath;
@@ -106,7 +107,13 @@ namespace Taskmaster.Services
         {
             try
             {
-                return JsonConvert.DeserializeObject<Envelope>(File.ReadAllText(path));
+                var envelope = JsonConvert.DeserializeObject<Envelope>(File.ReadAllText(path));
+                if (envelope?.Version <= CurrentVersion &&
+                    envelope.Tabs != null &&
+                    !envelope.Tabs.All(TaskPresetService.ValidateTab))
+                    throw new JsonSerializationException(
+                        "Task data contains invalid managed preset structure.");
+                return envelope;
             }
             catch (Exception ex)
             {
